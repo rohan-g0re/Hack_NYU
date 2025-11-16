@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 3
     LLM_RETRY_DELAY: int = 2  # seconds, base for exponential backoff
     LLM_DEFAULT_TEMPERATURE: float = 0.0  # Phase 2: deterministic by default
-    LLM_DEFAULT_MAX_TOKENS: int = 256  # Phase 2: constrained generation
+    LLM_DEFAULT_MAX_TOKENS: int = 2048  # Increased to allow longer messages with reasoning
     
     # OpenRouter Configuration
     LLM_ENABLE_OPENROUTER: bool = False

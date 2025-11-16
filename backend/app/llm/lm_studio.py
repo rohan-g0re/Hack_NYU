@@ -97,7 +97,8 @@ class LMStudioProvider:
         *,
         temperature: float,
         max_tokens: int,
-        stop: list[str] | None = None
+        stop: list[str] | None = None,
+        model: str | None = None
     ) -> LLMResult:
         """
         Generate complete response (non-streaming).
@@ -107,6 +108,7 @@ class LMStudioProvider:
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             stop: Optional stop sequences
+            model: Optional model name (uses default_model if not provided)
         
         Returns:
             LLMResult with text, usage, and model
@@ -116,8 +118,12 @@ class LMStudioProvider:
             ProviderUnavailableError: LM Studio not reachable
             ProviderResponseError: Invalid response from LM Studio
         """
+        # Use provided model or fall back to default
+        model_to_use = model or self.default_model
+        logger.debug(f"Using model: {model_to_use} (requested: {model}, default: {self.default_model})")
+        
         payload = {
-            "model": self.default_model,
+            "model": model_to_use,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -140,14 +146,14 @@ class LMStudioProvider:
                 # Extract response
                 text = data["choices"][0]["message"]["content"]
                 usage = data.get("usage", {})
-                model = data.get("model", self.default_model)
+                response_model = data.get("model", model_to_use)
                 
-                logger.info(f"LM Studio generate success (tokens: {usage.get('total_tokens', 'unknown')})")
+                logger.info(f"LM Studio generate success (model: {response_model}, tokens: {usage.get('total_tokens', 'unknown')})")
                 
                 return LLMResult(
                     text=text,
                     usage=usage,
-                    model=model
+                    model=response_model
                 )
                 
             except httpx.TimeoutException as e:
@@ -182,27 +188,33 @@ class LMStudioProvider:
         *,
         temperature: float,
         max_tokens: int,
-        stop: list[str] | None = None
+        stop: list[str] | None = None,
+        model: str | None = None
     ) -> AsyncIterator[TokenChunk]:
         """
-        Stream response tokens as they're generated.
+        Stream response tokens as they're generated (unfiltered).
         
         Args:
             messages: Conversation history
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
             stop: Optional stop sequences
+            model: Optional model name (uses default_model if not provided)
         
         Yields:
-            TokenChunk for each token
+            TokenChunk for each token (raw, unfiltered)
         
         Raises:
             ProviderTimeoutError: Request timed out
             ProviderUnavailableError: LM Studio not reachable
             ProviderResponseError: Invalid streaming response
         """
+        # Use provided model or fall back to default
+        model_to_use = model or self.default_model
+        logger.debug(f"Streaming with model: {model_to_use} (requested: {model}, default: {self.default_model})")
+        
         payload = {
-            "model": self.default_model,
+            "model": model_to_use,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -221,6 +233,7 @@ class LMStudioProvider:
                 response.raise_for_status()
                 
                 index = 0
+                
                 async for line in response.aiter_lines():
                     line = line.strip()
                     
@@ -240,11 +253,23 @@ class LMStudioProvider:
                         try:
                             data = json.loads(data_str)
                             delta = data["choices"][0].get("delta", {})
-                            content = delta.get("content", "")
                             
-                            if content:
-                                yield TokenChunk(token=content, index=index, is_end=False)
-                                index += 1
+                            # Ignore structured reasoning streams if present (future-proofing)
+                            if delta.get("reasoning"):
+                                continue
+                            
+                            token = delta.get("content", "")
+                            if not token:
+                                # Check for finish
+                                finish_reason = data["choices"][0].get("finish_reason")
+                                if finish_reason:
+                                    yield TokenChunk(token="", index=index, is_end=True)
+                                    break
+                                continue
+                            
+                            # Emit raw token without filtering
+                            yield TokenChunk(token=token, index=index, is_end=False)
+                            index += 1
                             
                             # Check if this is the last chunk
                             finish_reason = data["choices"][0].get("finish_reason")

@@ -169,7 +169,7 @@ async def force_decision(
     
     WHAT: Manually complete negotiation with outcome
     WHY: Allow manual override or early termination
-    HOW: Call SessionManager.finalize_run
+    HOW: Call SessionManager.finalize_run with validation
     
     Args:
         room_id: Negotiation run ID
@@ -184,8 +184,95 @@ async def force_decision(
         
     Raises:
         RoomNotFoundError: If room doesn't exist
+        ValidationError: If decision parameters are invalid
     """
+    from ....utils.exceptions import ValidationError
+    from ....core.models import NegotiationParticipant
+    
     logger.info(f"Forcing decision for room {room_id}: {decision_type}")
+    
+    # Validate decision_type
+    if decision_type not in ("deal", "no_deal"):
+        raise ValidationError(
+            message="decision_type must be 'deal' or 'no_deal'",
+            code="VALIDATION_ERROR",
+            details={"field": "decision_type", "value": decision_type}
+        )
+    
+    with get_db() as db:
+        # Check if run exists
+        run = db.query(NegotiationRun).filter(NegotiationRun.id == room_id).first()
+        if not run:
+            raise RoomNotFoundError(
+                message=f"Room {room_id} not found",
+                code="ROOM_NOT_FOUND"
+            )
+        
+        # Validate deal-specific parameters
+        if decision_type == "deal":
+            if not selected_seller_id:
+                raise ValidationError(
+                    message="selected_seller_id is required for decision_type=deal",
+                    code="VALIDATION_ERROR",
+                    details={"field": "selected_seller_id"}
+                )
+            
+            if final_price_per_unit is None:
+                raise ValidationError(
+                    message="final_price_per_unit is required for decision_type=deal",
+                    code="VALIDATION_ERROR",
+                    details={"field": "final_price_per_unit"}
+                )
+            
+            if quantity is None:
+                raise ValidationError(
+                    message="quantity is required for decision_type=deal",
+                    code="VALIDATION_ERROR",
+                    details={"field": "quantity"}
+                )
+            
+            # Ensure seller is a participant
+            participant = db.query(NegotiationParticipant).filter(
+                NegotiationParticipant.negotiation_run_id == room_id,
+                NegotiationParticipant.seller_id == selected_seller_id
+            ).first()
+            
+            if not participant:
+                raise ValidationError(
+                    message=f"Seller {selected_seller_id} is not a participant in this negotiation",
+                    code="VALIDATION_ERROR",
+                    details={"field": "selected_seller_id", "value": selected_seller_id}
+                )
+            
+            # Validate against buyer constraints
+            buyer_item = db.query(BuyerItem).filter(BuyerItem.id == run.buyer_item_id).first()
+            if buyer_item:
+                min_price = buyer_item.min_price_per_unit
+                max_price = buyer_item.max_price_per_unit
+                
+                if not (min_price <= final_price_per_unit <= max_price):
+                    raise ValidationError(
+                        message=f"final_price_per_unit ${final_price_per_unit:.2f} is outside buyer constraints (${min_price:.2f} - ${max_price:.2f})",
+                        code="VALIDATION_ERROR",
+                        details={
+                            "field": "final_price_per_unit",
+                            "value": final_price_per_unit,
+                            "min": min_price,
+                            "max": max_price
+                        }
+                    )
+                
+                if quantity < 1 or quantity > buyer_item.quantity_needed:
+                    raise ValidationError(
+                        message=f"quantity {quantity} is outside valid range (1 - {buyer_item.quantity_needed})",
+                        code="VALIDATION_ERROR",
+                        details={
+                            "field": "quantity",
+                            "value": quantity,
+                            "min": 1,
+                            "max": buyer_item.quantity_needed
+                        }
+                    )
     
     try:
         outcome = session_manager.finalize_run(
@@ -194,7 +281,8 @@ async def force_decision(
             selected_seller_id=selected_seller_id,
             final_price_per_unit=final_price_per_unit,
             quantity=quantity,
-            decision_reason=decision_reason
+            decision_reason=decision_reason or "Manual decision via force_decision endpoint",
+            emit_event=True  # Record system message for forced decisions
         )
         
         return {
@@ -203,7 +291,8 @@ async def force_decision(
             "selected_seller_id": outcome.selected_seller_id,
             "final_price": outcome.final_price_per_unit,
             "quantity": outcome.quantity,
-            "total_cost": outcome.total_cost
+            "total_cost": outcome.total_cost,
+            "decision_reason": outcome.decision_reason
         }
     except ValueError as e:
         raise RoomNotFoundError(

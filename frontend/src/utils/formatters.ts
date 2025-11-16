@@ -55,10 +55,43 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
- * Highlight @mentions in text by wrapping them in span tags
+ * Escape HTML special characters to prevent injection
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Remove reasoning/thinking segments like <think>...</think> and common prefixes
+ */
+export function stripThinking(text: string): string {
+  if (!text) return '';
+  
+  // Remove DeepSeek-style <think>...</think> blocks
+  let out = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  // Remove dangling <think> without closing tag
+  out = out.replace(/<think>[\s\S]*$/gi, '');
+  // Remove stray closing tags
+  out = out.replace(/<\/think>/gi, '');
+  
+  // Remove common reasoning prefixes on their own lines
+  out = out.replace(/^\s*(?:Thought|Thinking|Reasoning|Analysis|Chain of thought)\s*:\s*.*(\r?\n|$)/gmi, '');
+  
+  // Collapse extra whitespace and trim
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Highlight @mentions in text by wrapping them in span tags (safely escapes HTML first)
  */
 export function highlightMentions(text: string): string {
-  return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+  const safe = escapeHtml(text);
+  return safe.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
 }
 
 /**

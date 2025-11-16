@@ -34,6 +34,7 @@ class Session(Base):
     llm_model = Column(String(100), nullable=False)
     llm_temperature = Column(Float, default=0.7, nullable=False)
     llm_max_tokens = Column(Integer, default=500, nullable=False)
+    llm_provider = Column(String(20), default='lm_studio', nullable=False)  # 'lm_studio' or 'openrouter'
     
     # Relationships
     buyers = relationship("Buyer", back_populates="session", cascade="all, delete-orphan")

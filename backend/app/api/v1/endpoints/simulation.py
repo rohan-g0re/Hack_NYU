@@ -54,7 +54,11 @@ async def initialize_session(request: InitializeSessionRequest):
             code="MAX_SELLERS_EXCEEDED"
         )
     
-    logger.info(f"Initializing session with {len(request.sellers)} sellers")
+    logger.info(f"=== INITIALIZE SESSION REQUEST ===")
+    logger.info(f"Sellers count: {len(request.sellers)}")
+    logger.info(f"LLM Config: model={request.llm_config.model}, temp={request.llm_config.temperature}, max_tokens={request.llm_config.max_tokens}")
+    logger.info(f"LLM Provider received: {request.llm_config.provider}")
+    logger.info(f"Full llm_config: {request.llm_config.model_dump()}")
     
     try:
         response = session_manager.create_session(request)

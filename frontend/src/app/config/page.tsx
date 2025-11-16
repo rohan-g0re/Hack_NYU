@@ -45,12 +45,22 @@ export default function ConfigPage() {
 
     try {
       console.log('Calling initializeSession API...');
+      console.log('=== REQUEST DATA ===');
+      console.log('llmConfig being sent:', llmConfig);
+      console.log('Provider in llmConfig:', llmConfig.provider);
+      console.log('Full request payload:', JSON.stringify({
+        buyer,
+        sellers,
+        llm_config: llmConfig,
+      }, null, 2));
+      
       const response = await initializeSession({
         buyer,
         sellers,
         llm_config: llmConfig,
       });
 
+      console.log('=== RESPONSE DATA ===');
       console.log('API Response:', response);
       
       // Check if any negotiation rooms were created

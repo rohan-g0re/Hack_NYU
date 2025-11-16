@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import type { BuyerConfig, SellerConfig, LLMConfig, ShoppingItem, InventoryItem } from '@/lib/types';
-import { SellerPriority, SpeakingStyle, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS } from '@/lib/constants';
+import { SellerPriority, SpeakingStyle, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_PROVIDER } from '@/lib/constants';
 
 interface ConfigState {
   buyer: BuyerConfig;
@@ -31,9 +31,10 @@ const initialBuyer: BuyerConfig = {
 };
 
 const initialLLMConfig: LLMConfig = {
-  model: 'llama-3-8b-instruct',
+  model: 'qwen/qwen3-1.7b',  // Default LM Studio model
   temperature: DEFAULT_TEMPERATURE,
   max_tokens: DEFAULT_MAX_TOKENS,
+  provider: DEFAULT_PROVIDER,
 };
 
 const initialState: ConfigState = {
@@ -104,10 +105,16 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateLLMConfig = useCallback((config: Partial<LLMConfig>) => {
-    setState((prev) => ({
-      ...prev,
-      llmConfig: { ...prev.llmConfig, ...config },
-    }));
+    console.log('[ConfigStore] updateLLMConfig called with:', config);
+    setState((prev) => {
+      const newLLMConfig = { ...prev.llmConfig, ...config };
+      console.log('[ConfigStore] Previous llmConfig:', prev.llmConfig);
+      console.log('[ConfigStore] New llmConfig:', newLLMConfig);
+      return {
+        ...prev,
+        llmConfig: newLLMConfig,
+      };
+    });
   }, []);
 
   const loadSampleData = useCallback(() => {
@@ -201,11 +208,12 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       },
     ];
 
-    setState({
+    // Preserve the current llmConfig (including provider selection)
+    setState((prev) => ({
       buyer: sampleBuyer,
       sellers: sampleSellers,
-      llmConfig: initialLLMConfig,
-    });
+      llmConfig: prev.llmConfig, // Keep existing LLM config
+    }));
   }, []);
 
   const resetConfig = useCallback(() => {

@@ -80,6 +80,7 @@ class LLMConfig(BaseModel):
     model: str = Field(..., min_length=1)
     temperature: float = Field(0.7, ge=0.0, le=1.0)
     max_tokens: int = Field(500, gt=0)
+    provider: Optional[Literal["lm_studio", "openrouter"]] = Field(None, description="LLM provider to use (defaults to settings.LLM_PROVIDER)")
 
 
 class InitializeSessionRequest(BaseModel):

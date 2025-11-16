@@ -40,6 +40,7 @@ export interface LLMConfig {
   model: string;
   temperature: number;
   max_tokens: number;
+  provider?: 'lm_studio' | 'openrouter'; // Optional provider selection
 }
 
 // Session
@@ -147,17 +148,13 @@ export interface BuyerDecision {
 }
 
 export interface DecisionResponse {
-  room_id: string;
-  decision_made: boolean;
-  selected_seller?: {
-    seller_id: string;
-    seller_name: string;
-    final_price: number;
-    quantity: number;
-  };
-  decision_reason: string;
-  total_rounds: number;
-  negotiation_duration_seconds: number;
+  outcome_id: string;
+  decision_type: 'deal' | 'no_deal';
+  selected_seller_id?: string;
+  final_price?: number;
+  quantity?: number;
+  total_cost?: number;
+  decision_reason?: string;
 }
 
 // Summary

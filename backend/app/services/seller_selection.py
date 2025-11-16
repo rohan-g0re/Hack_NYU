@@ -40,10 +40,10 @@ def select_sellers_for_item(
     skipped_reasons = []
     
     for seller, inventory_list in zip(sellers, seller_inventories):
-        # Find matching inventory item
+        # Find matching inventory item by item_name (case-insensitive)
         matching_inventory = None
         for inv in inventory_list:
-            if inv.item_id == buyer_item.item_id:
+            if inv.item_name.lower().strip() == buyer_item.item_name.lower().strip():
                 matching_inventory = inv
                 break
         
@@ -120,10 +120,10 @@ def select_sellers_from_models(
     skipped_reasons = []
     
     for seller in sellers:
-        # Find matching inventory item
+        # Find matching inventory item by item_name (case-insensitive)
         matching_inventory = None
         for inv in seller.inventory:
-            if inv.item_id == buyer_item_id:
+            if inv.item_name.lower().strip() == buyer_item_name.lower().strip():
                 matching_inventory = inv
                 break
         

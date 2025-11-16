@@ -10,6 +10,7 @@ import { ErrorMessage } from '@/components/ErrorMessage';
 import { OffersPanel } from '@/features/negotiation-room/components/OffersPanel';
 import { ChatPanel } from '@/features/negotiation-room/components/ChatPanel';
 import { DecisionModal } from '@/features/negotiation-room/components/DecisionModal';
+import { ForceDecisionModal } from '@/features/negotiation-room/components/ForceDecisionModal';
 import { useNegotiationStream } from '@/features/negotiation-room/hooks/useNegotiationStream';
 import { startNegotiation } from '@/lib/api/negotiation';
 import { ROUTES } from '@/lib/router';
@@ -24,6 +25,7 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDecisionModal, setShowDecisionModal] = useState(false);
+  const [showForceDecisionModal, setShowForceDecisionModal] = useState(false);
   const [negotiationStarted, setNegotiationStarted] = useState(false);
   const initAttemptedRef = useRef(false);
 
@@ -168,13 +170,17 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
           <Button variant="ghost" onClick={() => router.push(ROUTES.NEGOTIATIONS)}>
             Stop
           </Button>
-          <Button variant="secondary" onClick={() => setShowDecisionModal(true)}>
+          <Button 
+            variant="secondary" 
+            onClick={() => setShowForceDecisionModal(true)}
+            disabled={negotiationState?.decision !== undefined}
+          >
             Force Decision
           </Button>
         </div>
       </div>
 
-      {/* Decision Modal */}
+      {/* Decision Modal (Auto-shown on completion) */}
       {showDecisionModal && negotiationState?.decision && (
         <DecisionModal
           isOpen={showDecisionModal}
@@ -185,6 +191,20 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
           decision={negotiationState.decision}
           itemName={room.item_name}
           rounds={negotiationState.currentRound}
+        />
+      )}
+
+      {/* Force Decision Modal (Manual trigger) */}
+      {showForceDecisionModal && (
+        <ForceDecisionModal
+          isOpen={showForceDecisionModal}
+          onClose={() => setShowForceDecisionModal(false)}
+          roomId={roomId}
+          itemName={room.item_name}
+          sellers={room.participating_sellers}
+          offers={negotiationState?.offers || {}}
+          constraints={room.buyer_constraints}
+          quantityNeeded={room.quantity_needed}
         />
       )}
     </div>

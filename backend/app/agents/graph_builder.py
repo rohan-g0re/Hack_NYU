@@ -98,6 +98,9 @@ class NegotiationGraph:
                 yield {
                     "type": "buyer_message",
                     "data": {
+                        "sender_id": room_state.buyer_id,
+                        "sender_name": room_state.buyer_name,
+                        "sender_type": "buyer",
                         "message": buyer_result["message"],
                         "mentioned_sellers": buyer_result["mentioned_sellers"],
                         "round": room_state.current_round
@@ -134,7 +137,8 @@ class NegotiationGraph:
                             "type": "seller_response",
                             "data": {
                                 "seller_id": seller_id,
-                                "seller_name": seller_name,
+                                "sender_name": seller_name,
+                                "sender_type": "seller",
                                 "message": result["message"],
                                 "offer": result.get("offer"),
                                 "round": room_state.current_round
@@ -280,10 +284,14 @@ class NegotiationGraph:
         """
         if mentioned_sellers:
             # Only mentioned sellers respond
+            logger.info(f"Message routing: mentioned_sellers={mentioned_sellers}")
+            logger.info(f"Message routing: all_sellers IDs={[s.seller_id for s in all_sellers]}, names={[s.name for s in all_sellers]}")
             responding = [s for s in all_sellers if s.seller_id in mentioned_sellers]
+            logger.info(f"Message routing: selected {len(responding)} sellers to respond: {[s.name for s in responding]}")
             return responding
         else:
             # No mentions = all sellers can respond
+            logger.info(f"Message routing: no mentions, all {len(all_sellers)} sellers can respond")
             return all_sellers
     
     async def _parallel_seller_responses_node(
@@ -305,15 +313,19 @@ class NegotiationGraph:
             """Get response from a single seller."""
             async with semaphore:
                 try:
-                    # Find matching inventory item
+                    logger.info(f"Getting response from seller {seller.name} (ID: {seller.seller_id}) for item: {room_state.buyer_constraints.item_name}")
+                    logger.debug(f"Seller {seller.name} inventory items: {[item.item_name for item in seller.inventory]}")
+                    
+                    # Find matching inventory item by item_name (case-insensitive)
                     inventory_item = None
                     for item in seller.inventory:
-                        if item.item_id == room_state.buyer_constraints.item_id:
+                        if item.item_name.lower().strip() == room_state.buyer_constraints.item_name.lower().strip():
                             inventory_item = item
+                            logger.info(f"Found matching inventory item for {seller.name}: {item.item_name}")
                             break
                     
                     if not inventory_item:
-                        logger.warning(f"Seller {seller.name} has no inventory for item")
+                        logger.warning(f"Seller {seller.name} (ID: {seller.seller_id}) has no inventory for item '{room_state.buyer_constraints.item_name}'. Available items: {[item.item_name for item in seller.inventory]}")
                         return None
                     
                     seller_agent = SellerAgent(
@@ -340,7 +352,9 @@ class NegotiationGraph:
                         sellers=room_state.sellers,
                         conversation_history=seller_history,
                         current_round=room_state.current_round,
-                        max_rounds=room_state.max_rounds
+                        max_rounds=room_state.max_rounds,
+                        llm_provider=room_state.llm_provider,
+                        llm_model=room_state.llm_model  # Pass model to temp state
                     )
                     
                     result = await seller_agent.respond(
@@ -365,10 +379,11 @@ class NegotiationGraph:
                     
                     room_state.conversation_history.append(message)
                     
+                    logger.info(f"Seller {seller.name} successfully generated response")
                     return result
                     
                 except Exception as e:
-                    logger.error(f"Seller {seller.name} response error: {e}")
+                    logger.error(f"Seller {seller.name} (ID: {seller.seller_id}) response error: {e}", exc_info=True)
                     return None
         
         # Gather all seller responses in parallel
@@ -378,9 +393,13 @@ class NegotiationGraph:
         # Map responses to seller IDs
         for seller, response in zip(sellers, responses):
             if isinstance(response, Exception):
-                logger.error(f"Seller {seller.name} raised exception: {response}")
+                logger.error(f"Seller {seller.name} (ID: {seller.seller_id}) raised exception: {response}", exc_info=True)
+                results[seller.seller_id] = None
+            elif response is None:
+                logger.warning(f"Seller {seller.name} (ID: {seller.seller_id}) returned None response")
                 results[seller.seller_id] = None
             else:
+                logger.info(f"Seller {seller.name} (ID: {seller.seller_id}) response mapped successfully")
                 results[seller.seller_id] = response
         
         return results
@@ -454,12 +473,13 @@ class NegotiationGraph:
                 min_rounds=min_rounds
             )
             
-            # Ask buyer agent to decide
+            # Ask buyer agent to decide - use model from room_state if available
             result = await self.provider.generate(
                 messages=decision_messages,
                 temperature=0.3,  # Slightly higher for decision-making
                 max_tokens=100,
-                stop=None
+                stop=None,
+                model=getattr(room_state, 'llm_model', None)  # Use model from session if available
             )
             
             decision_text = result.text.upper().strip()

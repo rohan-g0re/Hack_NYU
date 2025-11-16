@@ -6,6 +6,7 @@ import { useSession } from '@/store/sessionStore';
 import { openNegotiationStream } from '@/lib/api/sse';
 import type { Message, Offer, NegotiationEvent } from '@/lib/types';
 import { SSE_RECONNECT_DELAY_BASE, MAX_RECONNECT_ATTEMPTS, NegotiationStatus } from '@/lib/constants';
+import { stripThinking } from '@/utils/formatters';
 
 interface UseNegotiationStreamOptions {
   roomId: string;
@@ -53,24 +54,56 @@ export function useNegotiationStream({
           break;
 
         case 'message':
-        case 'buyer_message':
-          console.log(`Handling ${event.type} event:`, event);
+        case 'buyer_message': {
+          const rawMessage = event.content || event.message || '';
+          // Strip thinking tokens from the message
+          let displayMessage = stripThinking(rawMessage);
+
+          const isBuyerMessage =
+            event.type === 'buyer_message' || (event.sender_type || 'buyer') === 'buyer';
+
+          // For buyer messages, always show *something* even if empty
+          if ((!displayMessage || displayMessage.trim() === '') && isBuyerMessage) {
+            displayMessage = "I'm reviewing your offers and considering the best counter-offer.";
+          }
+
+          // For non-buyer generic messages, skip if still empty
+          if (!displayMessage || displayMessage.trim() === '') {
+            console.warn('Skipping empty message with no usable content');
+            break;
+          }
+
           const message: Message = {
             message_id: `msg_${Date.now()}_${Math.random()}`,
             turn: event.turn_number || event.round,
             timestamp: event.timestamp,
-            sender_type: event.sender_type || 'buyer',
+            sender_type: (event.sender_type as Message['sender_type']) || 'buyer',
             sender_id: event.sender_id,
             sender_name: event.sender_name,
-            message: event.content || event.message,
+            message: displayMessage,
             mentioned_agents: event.mentioned_sellers || [],
           };
           addMessage(roomId, message);
           break;
+        }
 
         case 'seller_response':
-          console.log('Handling seller_response event:', event);
           // Add seller message
+          const rawSellerMessage = event.content || event.message || '';
+          // Strip thinking tokens from the seller message
+          const displaySellerMessage = stripThinking(rawSellerMessage);
+          
+          // Extract offer if present
+          const sellerOfferData = event.offer ? {
+            price: event.offer.price,
+            quantity: event.offer.quantity,
+            timestamp: event.timestamp,
+          } : undefined;
+          
+          // Fallback: if message is empty but offer exists, generate a display message
+          const finalSellerMessage = displaySellerMessage || 
+            (sellerOfferData ? `Offering $${sellerOfferData.price}/unit for ${sellerOfferData.quantity} units` : '');
+          
           const sellerMessage: Message = {
             message_id: `msg_${Date.now()}_${Math.random()}`,
             turn: event.turn_number || event.round,
@@ -78,25 +111,19 @@ export function useNegotiationStream({
             sender_type: 'seller',
             sender_id: event.seller_id,
             sender_name: event.sender_name,
-            message: event.content || event.message,
+            message: finalSellerMessage,
             mentioned_agents: [],
+            updated_offer: sellerOfferData,
           };
           addMessage(roomId, sellerMessage);
           
-          // Extract and update offer if present
-          if (event.offer) {
-            console.log('Extracting offer from seller_response:', event.offer);
-            const sellerOffer: Offer = {
-              price: event.offer.price,
-              quantity: event.offer.quantity,
-              timestamp: event.timestamp,
-            };
-            updateOffer(roomId, event.seller_id, event.sender_name, sellerOffer);
+          // Also update the offers panel
+          if (sellerOfferData) {
+            updateOffer(roomId, event.seller_id, event.sender_name, sellerOfferData);
           }
           break;
 
         case 'offer':
-          console.log('Handling offer event:', event);
           const offer: Offer = {
             price: event.price_per_unit,
             quantity: event.quantity,
@@ -106,7 +133,6 @@ export function useNegotiationStream({
           break;
 
         case 'decision':
-          console.log('Handling decision event:', event);
           setDecision(roomId, {
             selected_seller_id: event.chosen_seller_id,
             seller_name: event.chosen_seller_name,
@@ -145,7 +171,6 @@ export function useNegotiationStream({
           break;
 
         case 'round_start':
-          console.log('Handling round_start event:', event);
           updateRound(roomId, event.round_number);
           // Sync round to session store
           updateNegotiationRoom(roomId, {

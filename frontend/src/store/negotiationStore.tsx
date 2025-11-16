@@ -66,7 +66,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const addMessage = useCallback((roomId: string, message: Message) => {
-    console.log(`[negotiationStore] Adding message to room ${roomId}:`, message);
     setState((prev) => {
       const room = prev.rooms[roomId];
       if (!room) {
@@ -78,8 +77,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
         ...room,
         messages: [...room.messages, message],
       };
-      
-      console.log(`[negotiationStore] Updated messages count: ${updatedRoom.messages.length}`);
 
       return {
         ...prev,
@@ -93,7 +90,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
 
   const updateOffer = useCallback(
     (roomId: string, sellerId: string, sellerName: string, offer: Offer) => {
-      console.log(`[negotiationStore] Updating offer for room ${roomId}, seller ${sellerName}:`, offer);
       setState((prev) => {
         const room = prev.rooms[roomId];
         if (!room) {
@@ -108,8 +104,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
             [sellerId]: { ...offer, seller_name: sellerName },
           },
         };
-        
-        console.log(`[negotiationStore] Updated offers count: ${Object.keys(updatedRoom.offers).length}`);
 
         return {
           ...prev,
@@ -124,7 +118,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
   );
 
   const updateRound = useCallback((roomId: string, round: number) => {
-    console.log(`[negotiationStore] Updating round for room ${roomId}: ${round}`);
     setState((prev) => {
       const room = prev.rooms[roomId];
       if (!room) {
@@ -136,8 +129,6 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
         ...room,
         currentRound: round,
       };
-      
-      console.log(`[negotiationStore] Updated currentRound to: ${updatedRoom.currentRound}`);
 
       return {
         ...prev,

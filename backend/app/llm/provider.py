@@ -23,7 +23,8 @@ class LLMProvider(Protocol):
         *,
         temperature: float,
         max_tokens: int,
-        stop: list[str] | None = None
+        stop: list[str] | None = None,
+        model: str | None = None
     ) -> LLMResult:
         """Generate a complete response (non-streaming)."""
         ...
@@ -34,7 +35,8 @@ class LLMProvider(Protocol):
         *,
         temperature: float,
         max_tokens: int,
-        stop: list[str] | None = None
+        stop: list[str] | None = None,
+        model: str | None = None
     ) -> AsyncIterator[TokenChunk]:
         """Stream response tokens as they're generated."""
         ...

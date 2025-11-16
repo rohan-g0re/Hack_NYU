@@ -37,4 +37,6 @@ class NegotiationRoomState:
     selected_seller_id: Optional[str] = None
     final_offer: Optional[dict] = None  # {"price": float, "quantity": int}
     decision_reason: Optional[str] = None
+    llm_provider: str = "lm_studio"  # LLM provider for this negotiation ('lm_studio' or 'openrouter')
+    llm_model: Optional[str] = None  # LLM model name from session (uses provider default if None)
 

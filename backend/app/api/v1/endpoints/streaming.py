@@ -71,8 +71,8 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
         # Get room state
         room_state, _ = active_rooms[room_id]
         
-        # Get LLM provider
-        provider = get_provider()
+        # Get LLM provider from room state (session-specific)
+        provider = get_provider(room_state.llm_provider)
         
         # Create negotiation graph
         graph = NegotiationGraph(provider)

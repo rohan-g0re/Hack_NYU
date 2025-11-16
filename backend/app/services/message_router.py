@@ -9,6 +9,9 @@ HOW: Regex parsing with name normalization
 import re
 from typing import List
 from ..models.agent import Seller
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def parse_mentions(text: str, sellers: List[Seller]) -> List[str]:
@@ -39,20 +42,36 @@ def parse_mentions(text: str, sellers: List[Seller]) -> List[str]:
         normalization_map[seller.name.lower()] = seller.seller_id
     
     # Find all @mentions using regex
-    mention_pattern = r'@([A-Za-z0-9_]+)'
+    # Pattern matches @ followed by one or more words (letters, numbers, underscores)
+    # Words can be separated by spaces, stops at punctuation or another @
+    mention_pattern = r'@([A-Za-z0-9_]+(?:\s+[A-Za-z0-9_]+)*)'
     matches = re.findall(mention_pattern, text)
+    
+    logger.debug(f"Parsing mentions from text: {text[:100]}")
+    logger.debug(f"Found mention matches: {matches}")
+    logger.debug(f"Available sellers: {[(s.name, s.seller_id) for s in sellers]}")
     
     mentioned_ids = []
     seen_ids = set()
     
     for match in matches:
+        # Strip whitespace from the match
+        match = match.strip()
+        if not match:
+            continue
+            
         normalized = _normalize_name(match)
         seller_id = normalization_map.get(normalized) or normalization_map.get(match.lower())
         
-        if seller_id and seller_id not in seen_ids:
-            mentioned_ids.append(seller_id)
-            seen_ids.add(seller_id)
+        if seller_id:
+            if seller_id not in seen_ids:
+                logger.debug(f"Matched mention '{match}' (normalized: '{normalized}') to seller ID: {seller_id}")
+                mentioned_ids.append(seller_id)
+                seen_ids.add(seller_id)
+        else:
+            logger.warning(f"Could not match mention '{match}' (normalized: '{normalized}') to any seller")
     
+    logger.debug(f"Final mentioned seller IDs: {mentioned_ids}")
     return mentioned_ids
 
 

@@ -6,51 +6,62 @@ WHY: Centralize provider selection and avoid multiple instances
 HOW: Read LLM_PROVIDER from config, cache singleton, log selection
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Literal
 
 if TYPE_CHECKING:
     from .provider import LLMProvider
 
-# Singleton instance
-_provider_instance: "LLMProvider | None" = None
+# Cache for provider instances (provider_name -> instance)
+_provider_cache: Dict[str, "LLMProvider"] = {}
 
 
-def get_provider() -> "LLMProvider":
+def get_provider(provider_name: str | None = None) -> "LLMProvider":
     """
-    Get the configured LLM provider singleton.
+    Get the LLM provider by name or use the default from settings.
+    
+    Args:
+        provider_name: Optional provider name ('lm_studio' or 'openrouter'). 
+                      If None, uses settings.LLM_PROVIDER
     
     Returns:
-        LLMProvider instance based on settings.LLM_PROVIDER
+        LLMProvider instance
     
     Raises:
         ValueError: If provider name is unknown
     """
-    global _provider_instance
+    # Import here to avoid circular dependencies
+    from ..core.config import settings
+    from ..utils.logger import get_logger
     
-    if _provider_instance is None:
-        # Import here to avoid circular dependencies
-        from ..core.config import settings
-        from ..utils.logger import get_logger
-        
-        logger = get_logger(__name__)
+    logger = get_logger(__name__)
+    
+    # Use default provider if not specified
+    if provider_name is None:
         provider_name = settings.LLM_PROVIDER
-        
-        if provider_name == "lm_studio":
-            from .lm_studio import LMStudioProvider
-            _provider_instance = LMStudioProvider()
-        elif provider_name == "openrouter":
-            from .openrouter import OpenRouterProvider
-            _provider_instance = OpenRouterProvider()
-        else:
-            raise ValueError(f"Unknown LLM provider: {provider_name}")
-        
-        logger.info(f"LLM provider initialized: {provider_name}")
     
-    return _provider_instance
+    # Return cached instance if available
+    if provider_name in _provider_cache:
+        return _provider_cache[provider_name]
+    
+    # Create new provider instance
+    if provider_name == "lm_studio":
+        from .lm_studio import LMStudioProvider
+        provider = LMStudioProvider()
+    elif provider_name == "openrouter":
+        from .openrouter import OpenRouterProvider
+        provider = OpenRouterProvider()
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider_name}")
+    
+    # Cache the instance
+    _provider_cache[provider_name] = provider
+    logger.info(f"LLM provider initialized: {provider_name}")
+    
+    return provider
 
 
 def reset_provider() -> None:
-    """Reset the provider singleton (useful for testing)."""
-    global _provider_instance
-    _provider_instance = None
+    """Reset all provider instances (useful for testing)."""
+    global _provider_cache
+    _provider_cache = {}
 

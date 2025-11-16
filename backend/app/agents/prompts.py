@@ -43,7 +43,12 @@ Your Goals:
 
 Available Sellers: {", ".join(seller_names)}
 
-Remember: You can only see messages addressed to you or public messages. Sellers' private information (costs, minimum prices) is hidden from you."""
+Important Instructions:
+- Do NOT reveal your chain-of-thought or internal reasoning
+- NEVER output <think>...</think> tags or similar reasoning blocks
+- Respond ONLY with your final message to the sellers
+- You can only see messages addressed to you or public messages
+- Sellers' private information (costs, minimum prices) is hidden from you"""
     
     # Build conversation context
     history_text = ""
@@ -78,15 +83,15 @@ def render_seller_prompt(
     WHY: Seller needs pricing constraints and behavioral instructions
     HOW: System message with inventory/priority/style, user message with filtered history
     """
-    # Find matching inventory item
+    # Find matching inventory item by item_name (case-insensitive)
     inventory_item = None
     for item in seller.inventory:
-        if item.item_id == constraints.item_id:
+        if item.item_name.lower().strip() == constraints.item_name.lower().strip():
             inventory_item = item
             break
     
     if not inventory_item:
-        raise ValueError(f"Seller {seller.name} does not have item {constraints.item_id}")
+        raise ValueError(f"Seller {seller.name} does not have item {constraints.item_name}")
     
     # Build priority instruction
     if seller.profile.priority == "customer_retention":
@@ -119,6 +124,11 @@ Your Behavior:
 - {style_instruction}
 - Be concise (under 80 words)
 - You can see all public messages and messages addressed to you
+
+Important Instructions:
+- Do NOT reveal your chain-of-thought or internal reasoning
+- NEVER output <think>...</think> tags or similar reasoning blocks
+- Respond ONLY with your final message (and optional offer JSON)
 
 Optional Offer Format:
 If you want to make a specific offer, include a JSON block at the end:
@@ -198,6 +208,11 @@ Decision Instructions:
 - If you want to CONTINUE negotiating, respond with: "CONTINUE" or "KEEP NEGOTIATING"
 - Consider: price, seller responsiveness, conversation quality, and whether you've negotiated enough rounds
 - You should negotiate at least {min_rounds} rounds before accepting unless the offer is exceptional
+
+Important:
+- Do NOT reveal your chain-of-thought or internal reasoning
+- NEVER output <think>...</think> tags or similar reasoning blocks
+- Respond ONLY with "ACCEPT [SellerName]" or "CONTINUE"
 
 Be decisive but thoughtful."""
 

@@ -89,12 +89,15 @@ class SessionManager:
         with get_db() as db:
             # Create session
             session_id = str(uuid.uuid4())
+            # Use provider from request if specified, otherwise use global settings
+            llm_provider = request.llm_config.provider or settings.LLM_PROVIDER
             session = SessionModel(
                 id=session_id,
                 status='draft',
                 llm_model=request.llm_config.model,
                 llm_temperature=request.llm_config.temperature,
-                llm_max_tokens=request.llm_config.max_tokens
+                llm_max_tokens=request.llm_config.max_tokens,
+                llm_provider=llm_provider
             )
             db.add(session)
             db.flush()
@@ -368,6 +371,12 @@ class SessionManager:
         """Create NegotiationRoomState from DB run."""
         logger.info(f"Creating room state from run {run.id}")
         
+        # Get session to retrieve LLM provider
+        session = db.query(SessionModel).filter(SessionModel.id == run.session_id).first()
+        if not session:
+            logger.error(f"Session {run.session_id} not found for run {run.id}")
+            return None
+        
         buyer_item = db.query(BuyerItem).filter(BuyerItem.id == run.buyer_item_id).first()
         if not buyer_item:
             logger.error(f"Buyer item {run.buyer_item_id} not found for run {run.id}")
@@ -436,7 +445,9 @@ class SessionManager:
             conversation_history=[],
             current_round=run.current_round,  # Use DB value (should be 0 after reset)
             max_rounds=run.max_rounds,
-            status='active'
+            status='active',
+            llm_provider=session.llm_provider,  # Use provider from session
+            llm_model=session.llm_model  # Use model from session
         )
         
         logger.info(f"Successfully created room state for {run.id}: {len(sellers)} sellers, round {run.current_round}/{run.max_rounds}")
@@ -523,7 +534,8 @@ class SessionManager:
         selected_seller_id: Optional[str] = None,
         final_price_per_unit: Optional[float] = None,
         quantity: Optional[int] = None,
-        decision_reason: Optional[str] = None
+        decision_reason: Optional[str] = None,
+        emit_event: bool = False
     ) -> NegotiationOutcome:
         """
         Finalize a negotiation run with outcome.
@@ -535,6 +547,7 @@ class SessionManager:
             final_price_per_unit: Final price (if deal)
             quantity: Quantity (if deal)
             decision_reason: Decision reason
+            emit_event: If True, emit decision event to active room state (for forced decisions)
         
         Returns:
             NegotiationOutcome ORM object
@@ -543,6 +556,13 @@ class SessionManager:
             run = db.query(NegotiationRun).filter(NegotiationRun.id == run_id).first()
             if not run:
                 raise ValueError(f"Run {run_id} not found")
+            
+            # Get seller name if dealing
+            seller_name = None
+            if decision_type == "deal" and selected_seller_id:
+                seller = db.query(Seller).filter(Seller.id == selected_seller_id).first()
+                if seller:
+                    seller_name = seller.name
             
             # Update run status
             run.status = 'completed'
@@ -565,6 +585,30 @@ class SessionManager:
                 decision_reason=decision_reason
             )
             db.add(outcome)
+            
+            # If room is active and emit_event is True, record decision message
+            if emit_event and run_id in active_rooms:
+                room_state, _ = active_rooms[run_id]
+                
+                # Record system message about forced decision
+                if decision_type == "deal":
+                    decision_message = f"🎯 Manual Decision: Accepted offer from {seller_name or selected_seller_id} at ${final_price_per_unit}/unit for {quantity} units (Total: ${total_cost}). Reason: {decision_reason or 'Manual override'}"
+                else:
+                    decision_message = f"❌ Manual Decision: No deal. Reason: {decision_reason or 'Manual rejection'}"
+                
+                # Create system message
+                system_message = Message(
+                    id=str(uuid.uuid4()),
+                    negotiation_run_id=run_id,
+                    turn_number=run.current_round + 1,
+                    sender_type="buyer",
+                    sender_id="system",
+                    sender_name="System",
+                    message_text=decision_message,
+                    mentioned_agents=None
+                )
+                db.add(system_message)
+            
             db.commit()
             
             # Write JSON log

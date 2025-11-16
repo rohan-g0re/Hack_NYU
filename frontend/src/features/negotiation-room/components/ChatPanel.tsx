@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useNegotiation } from '@/store/negotiationStore';
 import { Card } from '@/components/Card';
 import type { Message } from '@/lib/types';
-import { formatTimestamp, highlightMentions } from '@/utils/formatters';
+import { formatTimestamp, highlightMentions, stripThinking } from '@/utils/formatters';
 import { getSellerColor } from '@/lib/constants';
 
 interface ChatPanelProps {
@@ -12,6 +12,8 @@ interface ChatPanelProps {
 }
 
 function BuyerMessage({ message }: { message: Message }) {
+  const displayMessage = stripThinking(message.message);
+  
   return (
     <div className="flex justify-start mb-4 animate-slide-in">
       <div className="max-w-[80%]">
@@ -22,10 +24,9 @@ function BuyerMessage({ message }: { message: Message }) {
           <span className="text-sm font-medium text-neutral-700">{message.sender_name}</span>
           <span className="text-xs text-neutral-500">{formatTimestamp(message.timestamp)}</span>
         </div>
-        <div
-          className="bg-primary-100 text-primary-900 rounded-lg rounded-tl-none px-4 py-2"
-          dangerouslySetInnerHTML={{ __html: highlightMentions(message.message) }}
-        />
+        <div className="bg-primary-100 text-primary-900 rounded-lg rounded-tl-none px-4 py-2">
+          {displayMessage}
+        </div>
       </div>
     </div>
   );
@@ -33,6 +34,7 @@ function BuyerMessage({ message }: { message: Message }) {
 
 function SellerMessage({ message, sellerIndex }: { message: Message; sellerIndex: number }) {
   const sellerColor = getSellerColor(sellerIndex);
+  const displayMessage = stripThinking(message.message);
   
   return (
     <div className="flex justify-end mb-4 animate-slide-in">
@@ -48,7 +50,7 @@ function SellerMessage({ message, sellerIndex }: { message: Message; sellerIndex
           </div>
         </div>
         <div className="bg-neutral-100 text-neutral-900 rounded-lg rounded-tr-none px-4 py-2">
-          <p>{message.message}</p>
+          <div dangerouslySetInnerHTML={{ __html: highlightMentions(displayMessage) }} />
           {message.updated_offer && (
             <div className="mt-2 pt-2 border-t border-neutral-300">
               <p className="text-sm font-semibold text-secondary-600">
@@ -131,9 +133,11 @@ export function ChatPanel({ roomId }: ChatPanelProps) {
         ) : (
           <div>
             {negotiationState.messages.map((message, index) => {
-              if (message.sender_type === 'buyer') {
+              const senderType = message.sender_type?.toLowerCase().trim();
+              
+              if (senderType === 'buyer') {
                 return <BuyerMessage key={message.message_id || index} message={message} />;
-              } else if (message.sender_type === 'seller') {
+              } else if (senderType === 'seller') {
                 return (
                   <SellerMessage
                     key={message.message_id || index}

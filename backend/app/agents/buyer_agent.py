@@ -29,7 +29,7 @@ class BuyerAgent:
         constraints: BuyerConstraints,
         *,
         temperature: float = 0.0,
-        max_tokens: int = 256
+        max_tokens: int = 1024
     ):
         """
         Initialize buyer agent.
@@ -71,12 +71,13 @@ class BuyerAgent:
         )
         
         try:
-            # Generate response
+            # Generate response - use model from room_state if available
             result = await self.provider.generate(
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                stop=None
+                stop=None,
+                model=getattr(room_state, 'llm_model', None)  # Use model from session if available
             )
             
             # Sanitize output
@@ -108,8 +109,8 @@ class BuyerAgent:
         Sanitize LLM output.
         
         WHAT: Clean and normalize message text
-        WHY: Remove artifacts, normalize whitespace
-        HOW: Trim, collapse whitespace, remove markdown code blocks
+        WHY: Remove artifacts, normalize whitespace (reasoning tokens handled by frontend)
+        HOW: Remove markdown/JSON blocks, normalize whitespace
         """
         if not text:
             return ""
@@ -127,9 +128,9 @@ class BuyerAgent:
         # Trim
         text = text.strip()
         
-        # Limit length (safety check)
-        if len(text) > 500:
-            text = text[:497] + "..."
+        # Limit length (safety check) - increased for longer messages
+        if len(text) > 2000:
+            text = text[:1997] + "..."
         
         return text
 

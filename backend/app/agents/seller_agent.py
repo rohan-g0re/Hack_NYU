@@ -29,7 +29,7 @@ class SellerAgent:
         inventory_item: InventoryItem,
         *,
         temperature: float = 0.0,
-        max_tokens: int = 192
+        max_tokens: int = 1024
     ):
         """
         Initialize seller agent.
@@ -77,12 +77,13 @@ class SellerAgent:
         )
         
         try:
-            # Generate response
+            # Generate response - use model from room_state if available
             result = await self.provider.generate(
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                stop=None
+                stop=None,
+                model=getattr(room_state, 'llm_model', None)  # Use model from session if available
             )
             
             # Sanitize message
@@ -94,6 +95,10 @@ class SellerAgent:
             # Clamp offer to constraints
             if offer:
                 offer = self._clamp_offer(offer)
+            
+            # Fallback: if message is empty but offer exists, generate a basic message
+            if not message_text and offer:
+                message_text = f"I can offer ${offer['price']:.2f} per unit for {offer['quantity']} units."
             
             logger.info(
                 f"Seller {self.seller.name} generated response "
@@ -117,8 +122,8 @@ class SellerAgent:
         """
         Sanitize LLM output, removing JSON blocks.
         
-        WHAT: Clean message text, remove offer JSON
-        WHY: Keep only the conversational message
+        WHAT: Clean message text, remove offer JSON (reasoning tokens handled by frontend)
+        WHY: Keep only the conversational message, separate from structured offers
         HOW: Remove JSON blocks, normalize whitespace
         """
         if not text:
@@ -137,9 +142,9 @@ class SellerAgent:
         # Trim
         text = text.strip()
         
-        # Limit length
-        if len(text) > 400:
-            text = text[:397] + "..."
+        # Limit length - increased for longer responses
+        if len(text) > 2000:
+            text = text[:1997] + "..."
         
         return text
     

@@ -28,7 +28,7 @@ export enum SessionStatus {
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 export const API_VERSION = 'v1';
 export const API_PREFIX = `/api/${API_VERSION}`;
-export const DEFAULT_PROVIDER = (process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || 'openrouter') as 'openrouter' | 'lm_studio';
+export const DEFAULT_PROVIDER = (process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || 'lm_studio') as 'openrouter' | 'lm_studio';
 
 // Configuration Defaults
 export const MAX_SELLERS = 10;
