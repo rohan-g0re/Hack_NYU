@@ -70,7 +70,7 @@ export function OffersPanel({ roomId, itemName, constraints, sellers }: OffersPa
           <div className="space-y-1 text-sm">
             <p>
               <span className="text-neutral-600">Wanted Quantity:</span>{' '}
-              <span className="font-semibold">{sellers[0]?.seller_id ? 'TBD' : 'N/A'} units</span>
+              <span className="font-semibold">{constraints.quantity_needed || 'TBD'} units</span>
             </p>
             <p>
               <span className="text-neutral-600">Min Price:</span>{' '}

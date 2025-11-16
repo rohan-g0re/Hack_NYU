@@ -88,19 +88,36 @@ export function ItemCard({ room }: ItemCardProps) {
             <div>
               <h3 className="text-lg font-semibold text-neutral-900">{room.item_name}</h3>
               <p className="text-sm text-neutral-600">Quantity: {room.quantity_needed} units</p>
+              {room.current_round !== undefined && room.max_rounds !== undefined && (
+                <p className="text-xs text-neutral-500 mt-1">
+                  Round {room.current_round} / {room.max_rounds}
+                </p>
+              )}
             </div>
           </div>
           {getStatusBadge()}
         </div>
 
-        {/* Price Constraints */}
-        <div className="bg-neutral-50 rounded-lg p-3 border border-neutral-200">
-          <p className="text-xs font-medium text-neutral-600 mb-1">Per-Item Price Constraints:</p>
-          <p className="text-sm font-semibold text-neutral-900">
-            {formatCurrency(room.buyer_constraints.min_price_per_unit)} -{' '}
-            {formatCurrency(room.buyer_constraints.max_price_per_unit)} per unit
-          </p>
-        </div>
+        {/* Final Deal or Price Constraints */}
+        {room.final_deal ? (
+          <div className="bg-secondary-50 rounded-lg p-3 border border-secondary-200">
+            <p className="text-xs font-medium text-secondary-700 mb-1">Final Deal:</p>
+            <p className="text-sm font-semibold text-secondary-900">
+              {room.final_deal.seller_name} • {formatCurrency(room.final_deal.price)}/unit • {room.final_deal.quantity} units
+            </p>
+            <p className="text-xs text-secondary-600 mt-1">
+              Total: {formatCurrency(room.final_deal.total_cost)}
+            </p>
+          </div>
+        ) : (
+          <div className="bg-neutral-50 rounded-lg p-3 border border-neutral-200">
+            <p className="text-xs font-medium text-neutral-600 mb-1">Per-Item Price Constraints:</p>
+            <p className="text-sm font-semibold text-neutral-900">
+              {formatCurrency(room.buyer_constraints.min_price_per_unit)} -{' '}
+              {formatCurrency(room.buyer_constraints.max_price_per_unit)} per unit
+            </p>
+          </div>
+        )}
 
         {/* Matched Sellers */}
         {room.participating_sellers.length > 0 ? (

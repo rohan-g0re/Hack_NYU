@@ -57,6 +57,7 @@ export interface SellerParticipant {
 export interface BuyerConstraints {
   min_price_per_unit: number;
   max_price_per_unit: number;
+  quantity_needed?: number; // Optional for compatibility
 }
 
 export interface NegotiationRoom {
@@ -68,6 +69,14 @@ export interface NegotiationRoom {
   participating_sellers: SellerParticipant[];
   status: NegotiationStatus;
   reason?: string;
+  current_round?: number; // Current round number
+  max_rounds?: number; // Maximum rounds
+  final_deal?: {
+    seller_name: string;
+    price: number;
+    quantity: number;
+    total_cost: number;
+  };
 }
 
 export interface InitializeSessionResponse {
@@ -194,13 +203,15 @@ export interface SessionSummary {
 // SSE Events - Matching API_DOCUMENTATION.md event types
 export type NegotiationEvent =
   | { type: 'connected'; room_id: string; timestamp: string }
-  | { type: 'message'; sender_type: 'buyer' | 'seller'; sender_name: string; content: string; turn_number: number; timestamp: string; sender_id?: string }
-  | { type: 'offer'; seller_id: string; seller_name: string; price_per_unit: number; quantity: number; total_price: number; timestamp: string }
-  | { type: 'decision'; decision: 'accept' | 'reject' | 'no_deal'; chosen_seller_id?: string; chosen_seller_name?: string; final_price?: number; final_quantity?: number; total_cost?: number; reason?: string; timestamp: string }
-  | { type: 'round_start'; round_number: number; max_rounds: number; timestamp: string }
-  | { type: 'negotiation_complete'; room_id: string; outcome: string; rounds_completed: number; duration_seconds: number; timestamp: string }
-  | { type: 'heartbeat'; timestamp: string }
-  | { type: 'error'; error_code: string; message: string; retry_count?: number; timestamp: string };
+  | { type: 'message'; sender_type: 'buyer' | 'seller'; sender_name: string; content: string; turn_number: number; timestamp: string; sender_id?: string; mentioned_sellers?: string[] }
+  | { type: 'buyer_message'; sender_type?: 'buyer'; sender_name: string; content?: string; message?: string; turn_number?: number; round?: number; timestamp: string; sender_id?: string; mentioned_sellers?: string[] }
+  | { type: 'seller_response'; sender_type?: 'seller'; seller_id: string; sender_name: string; content?: string; message?: string; offer?: { price: number; quantity: number }; turn_number?: number; round?: number; timestamp: string }
+  | { type: 'offer'; seller_id: string; seller_name: string; price_per_unit: number; quantity: number; total_price?: number; timestamp: string }
+  | { type: 'decision'; decision?: 'accept' | 'reject' | 'no_deal'; chosen_seller_id?: string; chosen_seller_name?: string; final_price?: number; final_quantity?: number; total_cost?: number; reason?: string; round?: number; timestamp: string }
+  | { type: 'round_start'; round_number: number; max_rounds?: number; timestamp: string }
+  | { type: 'negotiation_complete'; room_id?: string; outcome?: string; rounds_completed?: number; duration_seconds?: number; selected_seller_name?: string; timestamp: string }
+  | { type: 'heartbeat'; timestamp: string; message?: string; round?: number }
+  | { type: 'error'; error_code?: string; error?: string; message: string; retry_count?: number; timestamp: string };
 
 // Legacy SSE event type (for backward compatibility)
 export type SSEEventType =

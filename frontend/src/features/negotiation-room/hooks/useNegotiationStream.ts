@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useNegotiation } from '@/store/negotiationStore';
+import { useSession } from '@/store/sessionStore';
 import { openNegotiationStream } from '@/lib/api/sse';
 import type { Message, Offer, NegotiationEvent } from '@/lib/types';
-import { SSE_RECONNECT_DELAY_BASE, MAX_RECONNECT_ATTEMPTS } from '@/lib/constants';
+import { SSE_RECONNECT_DELAY_BASE, MAX_RECONNECT_ATTEMPTS, NegotiationStatus } from '@/lib/constants';
 
 interface UseNegotiationStreamOptions {
   roomId: string;
@@ -27,10 +28,20 @@ export function useNegotiationStream({
     setStreaming,
     connectStream,
     disconnectStream,
+    rooms,
   } = useNegotiation();
+  const { updateNegotiationRoom, updateNegotiationRoomStatus } = useSession();
 
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const onErrorRef = useRef(onError);
+  const onCompleteRef = useRef(onComplete);
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onErrorRef.current = onError;
+    onCompleteRef.current = onComplete;
+  }, [onError, onComplete]);
 
   const handleEvent = useCallback(
     (event: NegotiationEvent) => {
@@ -42,20 +53,50 @@ export function useNegotiationStream({
           break;
 
         case 'message':
+        case 'buyer_message':
+          console.log(`Handling ${event.type} event:`, event);
           const message: Message = {
             message_id: `msg_${Date.now()}_${Math.random()}`,
-            turn: event.turn_number,
+            turn: event.turn_number || event.round,
             timestamp: event.timestamp,
-            sender_type: event.sender_type,
+            sender_type: event.sender_type || 'buyer',
             sender_id: event.sender_id,
             sender_name: event.sender_name,
-            message: event.content,
-            mentioned_agents: [],
+            message: event.content || event.message,
+            mentioned_agents: event.mentioned_sellers || [],
           };
           addMessage(roomId, message);
           break;
 
+        case 'seller_response':
+          console.log('Handling seller_response event:', event);
+          // Add seller message
+          const sellerMessage: Message = {
+            message_id: `msg_${Date.now()}_${Math.random()}`,
+            turn: event.turn_number || event.round,
+            timestamp: event.timestamp,
+            sender_type: 'seller',
+            sender_id: event.seller_id,
+            sender_name: event.sender_name,
+            message: event.content || event.message,
+            mentioned_agents: [],
+          };
+          addMessage(roomId, sellerMessage);
+          
+          // Extract and update offer if present
+          if (event.offer) {
+            console.log('Extracting offer from seller_response:', event.offer);
+            const sellerOffer: Offer = {
+              price: event.offer.price,
+              quantity: event.offer.quantity,
+              timestamp: event.timestamp,
+            };
+            updateOffer(roomId, event.seller_id, event.sender_name, sellerOffer);
+          }
+          break;
+
         case 'offer':
+          console.log('Handling offer event:', event);
           const offer: Offer = {
             price: event.price_per_unit,
             quantity: event.quantity,
@@ -65,6 +106,7 @@ export function useNegotiationStream({
           break;
 
         case 'decision':
+          console.log('Handling decision event:', event);
           setDecision(roomId, {
             selected_seller_id: event.chosen_seller_id,
             seller_name: event.chosen_seller_name,
@@ -74,23 +116,81 @@ export function useNegotiationStream({
             total_cost: event.total_cost,
             timestamp: event.timestamp,
           });
+          
+          // Sync final deal to session store
+          if (event.chosen_seller_name && event.final_price && event.final_quantity && event.total_cost) {
+            updateNegotiationRoom(roomId, {
+              status: NegotiationStatus.COMPLETED,
+              current_round: event.round,
+              final_deal: {
+                seller_name: event.chosen_seller_name,
+                price: event.final_price,
+                quantity: event.final_quantity,
+                total_cost: event.total_cost,
+              },
+            });
+          }
+          
+          // Add system message about the decision
+          const decisionMessage: Message = {
+            message_id: `msg_decision_${Date.now()}`,
+            turn: event.round || 999,
+            timestamp: event.timestamp,
+            sender_type: 'system',
+            sender_name: 'System',
+            message: `🎉 Deal Complete! Selected ${event.chosen_seller_name} at $${event.final_price}/unit for ${event.final_quantity} units. Total: $${event.total_cost}. Reason: ${event.reason || 'Best offer'}`,
+            mentioned_agents: [],
+          };
+          addMessage(roomId, decisionMessage);
           break;
 
         case 'round_start':
+          console.log('Handling round_start event:', event);
           updateRound(roomId, event.round_number);
+          // Sync round to session store
+          updateNegotiationRoom(roomId, {
+            current_round: event.round_number,
+            max_rounds: event.max_rounds,
+            status: NegotiationStatus.ACTIVE,
+          });
           break;
 
         case 'negotiation_complete':
+          console.log('Negotiation complete event received, closing stream');
           setStreaming(roomId, false);
-          if (onComplete) {
-            onComplete(event);
+          
+          // Sync completion to session store
+          const negotiationState = rooms[roomId];
+          if (negotiationState?.decision) {
+            updateNegotiationRoom(roomId, {
+              status: NegotiationStatus.COMPLETED,
+              current_round: negotiationState.currentRound,
+              final_deal: {
+                seller_name: negotiationState.decision.seller_name,
+                price: negotiationState.decision.final_price,
+                quantity: negotiationState.decision.quantity,
+                total_cost: negotiationState.decision.total_cost,
+              },
+            });
+          } else {
+            // Fallback: update status even if decision not set
+            updateNegotiationRoomStatus(roomId, NegotiationStatus.COMPLETED);
+          }
+          
+          // Close the connection immediately to prevent reconnects
+          if (cleanupRef.current) {
+            cleanupRef.current();
+            cleanupRef.current = null;
+          }
+          if (onCompleteRef.current) {
+            onCompleteRef.current(event);
           }
           break;
 
         case 'error':
           console.error('SSE Error:', event);
-          if (onError) {
-            onError(event.message);
+          if (onErrorRef.current) {
+            onErrorRef.current(event.message);
           }
           // Try to reconnect unless it's a fatal error
           if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
@@ -100,7 +200,13 @@ export function useNegotiationStream({
             );
             reconnectTimeoutRef.current = setTimeout(() => {
               reconnectAttemptsRef.current++;
-              connect();
+              // Reconnect by creating a new stream
+              try {
+                const cleanup = openNegotiationStream(roomId, handleEvent);
+                cleanupRef.current = cleanup;
+              } catch (error) {
+                console.error('Reconnect failed:', error);
+              }
             }, delay);
           } else {
             setStreaming(roomId, false);
@@ -112,7 +218,7 @@ export function useNegotiationStream({
           break;
       }
     },
-    [roomId, addMessage, updateOffer, updateRound, setDecision, setStreaming, onComplete, onError]
+    [roomId, addMessage, updateOffer, updateRound, setDecision, setStreaming]
   );
 
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -123,11 +229,11 @@ export function useNegotiationStream({
       cleanupRef.current = cleanup;
     } catch (error) {
       console.error('Failed to create event source:', error);
-      if (onError) {
-        onError('Failed to establish connection');
+      if (onErrorRef.current) {
+        onErrorRef.current('Failed to establish connection');
       }
     }
-  }, [roomId, handleEvent, onError]);
+  }, [roomId, handleEvent]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -150,13 +256,33 @@ export function useNegotiationStream({
     }
 
     console.log('Negotiation started, connecting to SSE stream...');
-    connect();
+    
+    // Connect directly without going through callback
+    try {
+      const cleanup = openNegotiationStream(roomId, handleEvent);
+      cleanupRef.current = cleanup;
+    } catch (error) {
+      console.error('Failed to create event source:', error);
+      if (onErrorRef.current) {
+        onErrorRef.current('Failed to establish connection');
+      }
+    }
 
     // Cleanup on unmount
     return () => {
-      disconnect();
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
+      disconnectStream(roomId);
+      setStreaming(roomId, false);
     };
-  }, [enabled, connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, roomId]); // Only depend on enabled and roomId
 
   return {
     connect,

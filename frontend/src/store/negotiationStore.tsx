@@ -66,18 +66,26 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const addMessage = useCallback((roomId: string, message: Message) => {
+    console.log(`[negotiationStore] Adding message to room ${roomId}:`, message);
     setState((prev) => {
       const room = prev.rooms[roomId];
-      if (!room) return prev;
+      if (!room) {
+        console.error(`[negotiationStore] Room ${roomId} not found in state!`);
+        return prev;
+      }
+
+      const updatedRoom = {
+        ...room,
+        messages: [...room.messages, message],
+      };
+      
+      console.log(`[negotiationStore] Updated messages count: ${updatedRoom.messages.length}`);
 
       return {
         ...prev,
         rooms: {
           ...prev.rooms,
-          [roomId]: {
-            ...room,
-            messages: [...room.messages, message],
-          },
+          [roomId]: updatedRoom,
         },
       };
     });
@@ -85,21 +93,29 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
 
   const updateOffer = useCallback(
     (roomId: string, sellerId: string, sellerName: string, offer: Offer) => {
+      console.log(`[negotiationStore] Updating offer for room ${roomId}, seller ${sellerName}:`, offer);
       setState((prev) => {
         const room = prev.rooms[roomId];
-        if (!room) return prev;
+        if (!room) {
+          console.error(`[negotiationStore] Room ${roomId} not found for offer update!`);
+          return prev;
+        }
+
+        const updatedRoom = {
+          ...room,
+          offers: {
+            ...room.offers,
+            [sellerId]: { ...offer, seller_name: sellerName },
+          },
+        };
+        
+        console.log(`[negotiationStore] Updated offers count: ${Object.keys(updatedRoom.offers).length}`);
 
         return {
           ...prev,
           rooms: {
             ...prev.rooms,
-            [roomId]: {
-              ...room,
-              offers: {
-                ...room.offers,
-                [sellerId]: { ...offer, seller_name: sellerName },
-              },
-            },
+            [roomId]: updatedRoom,
           },
         };
       });
@@ -108,18 +124,26 @@ export function NegotiationProvider({ children }: { children: React.ReactNode })
   );
 
   const updateRound = useCallback((roomId: string, round: number) => {
+    console.log(`[negotiationStore] Updating round for room ${roomId}: ${round}`);
     setState((prev) => {
       const room = prev.rooms[roomId];
-      if (!room) return prev;
+      if (!room) {
+        console.error(`[negotiationStore] Room ${roomId} not found for round update!`);
+        return prev;
+      }
+
+      const updatedRoom = {
+        ...room,
+        currentRound: round,
+      };
+      
+      console.log(`[negotiationStore] Updated currentRound to: ${updatedRoom.currentRound}`);
 
       return {
         ...prev,
         rooms: {
           ...prev.rooms,
-          [roomId]: {
-            ...room,
-            currentRound: round,
-          },
+          [roomId]: updatedRoom,
         },
       };
     });

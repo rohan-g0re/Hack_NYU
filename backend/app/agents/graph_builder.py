@@ -80,6 +80,16 @@ class NegotiationGraph:
                 room_state.current_round += 1
                 logger.info(f"=== Starting round {room_state.current_round}/{self.max_rounds} ===")
                 
+                # Emit round_start event
+                yield {
+                    "type": "round_start",
+                    "data": {
+                        "round_number": room_state.current_round,
+                        "max_rounds": self.max_rounds
+                    },
+                    "timestamp": datetime.now()
+                }
+                
                 # Node 1: Buyer Turn
                 buyer_result = await self._buyer_turn_node(room_state)
                 if not buyer_result:
@@ -114,10 +124,17 @@ class NegotiationGraph:
                 # Emit seller responses
                 for seller_id, result in seller_results.items():
                     if result:
+                        # Find seller name
+                        seller_name = next(
+                            (s.name for s in room_state.sellers if s.seller_id == seller_id),
+                            "Unknown Seller"
+                        )
+                        
                         yield {
                             "type": "seller_response",
                             "data": {
                                 "seller_id": seller_id,
+                                "seller_name": seller_name,
                                 "message": result["message"],
                                 "offer": result.get("offer"),
                                 "round": room_state.current_round
@@ -134,10 +151,33 @@ class NegotiationGraph:
                     room_state.final_offer = decision["offer"]
                     room_state.decision_reason = decision.get("reason", "Best offer selected")
                     
+                    # Find seller name
+                    selected_seller_name = next(
+                        (s.name for s in room_state.sellers if s.seller_id == decision["seller_id"]),
+                        "Unknown Seller"
+                    )
+                    
+                    # Emit decision event first
+                    yield {
+                        "type": "decision",
+                        "data": {
+                            "decision": "accept",
+                            "chosen_seller_id": decision["seller_id"],
+                            "chosen_seller_name": selected_seller_name,
+                            "final_price": decision["offer"]["price"],
+                            "final_quantity": decision["offer"]["quantity"],
+                            "total_cost": decision["offer"]["price"] * decision["offer"]["quantity"],
+                            "reason": decision.get("reason", "Best offer selected")
+                        },
+                        "timestamp": datetime.now()
+                    }
+                    
+                    # Then emit completion
                     yield {
                         "type": "negotiation_complete",
                         "data": {
                             "selected_seller_id": decision["seller_id"],
+                            "selected_seller_name": selected_seller_name,
                             "final_offer": decision["offer"],
                             "reason": decision.get("reason"),
                             "rounds": room_state.current_round

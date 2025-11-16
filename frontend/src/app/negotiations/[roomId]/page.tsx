@@ -13,12 +13,12 @@ import { DecisionModal } from '@/features/negotiation-room/components/DecisionMo
 import { useNegotiationStream } from '@/features/negotiation-room/hooks/useNegotiationStream';
 import { startNegotiation } from '@/lib/api/negotiation';
 import { ROUTES } from '@/lib/router';
-import { MAX_NEGOTIATION_ROUNDS } from '@/lib/constants';
+import { MAX_NEGOTIATION_ROUNDS, NegotiationStatus } from '@/lib/constants';
 
 export default function NegotiationRoomPage({ params }: { params: { roomId: string } }) {
   const router = useRouter();
   const { roomId } = params;
-  const { negotiationRooms } = useSession();
+  const { negotiationRooms, updateNegotiationRoomStatus } = useSession();
   const { initializeRoom, rooms, setActiveRoom } = useNegotiation();
   
   const [loading, setLoading] = useState(false);
@@ -55,6 +55,9 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
         await startNegotiation(roomId);
         console.log('Negotiation started successfully - enabling SSE connection');
         
+        // Update status to ACTIVE in session store
+        updateNegotiationRoomStatus(roomId, NegotiationStatus.ACTIVE);
+        
         // Small delay to ensure backend has fully initialized the room
         await new Promise(resolve => setTimeout(resolve, 100));
         setNegotiationStarted(true); // Signal SSE to connect
@@ -62,6 +65,7 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
         // 409 Conflict means negotiation is already active - that's fine!
         if (err.status === 409 || err.code === 'NEGOTIATION_ALREADY_ACTIVE') {
           console.log('Negotiation already active, continuing...');
+          updateNegotiationRoomStatus(roomId, NegotiationStatus.ACTIVE);
           await new Promise(resolve => setTimeout(resolve, 100));
           setNegotiationStarted(true); // Still enable SSE
         } else {
@@ -74,7 +78,7 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
     };
 
     initNegotiation();
-  }, [roomId, room, router, initializeRoom, setActiveRoom]);
+  }, [roomId, room, router, initializeRoom, setActiveRoom, updateNegotiationRoomStatus]);
 
   // Setup SSE stream - ONLY after negotiation has started
   useNegotiationStream({

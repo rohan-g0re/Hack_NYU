@@ -27,6 +27,7 @@ interface SessionContextValue extends SessionState {
   updateSessionDetails: (details: SessionDetails) => void;
   updateSessionStatus: (status: SessionStatus) => void;
   updateNegotiationRoomStatus: (roomId: string, status: string) => void;
+  updateNegotiationRoom: (roomId: string, updates: Partial<NegotiationRoom>) => void;
   setLLMProvider: (provider: 'openrouter' | 'lm_studio') => void;
   clearSession: () => void;
 }
@@ -81,6 +82,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const updateNegotiationRoom = useCallback((roomId: string, updates: Partial<NegotiationRoom>) => {
+    console.log(`[sessionStore] Updating room ${roomId}:`, updates);
+    setState((prev) => ({
+      ...prev,
+      negotiationRooms: prev.negotiationRooms.map((room) =>
+        room.room_id === roomId ? { ...room, ...updates } : room
+      ),
+    }));
+  }, []);
+
   const setLLMProvider = useCallback((provider: 'openrouter' | 'lm_studio') => {
     setState((prev) => ({ ...prev, llmProvider: provider }));
     // Persist to localStorage
@@ -110,6 +121,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     updateSessionDetails,
     updateSessionStatus,
     updateNegotiationRoomStatus,
+    updateNegotiationRoom,
     setLLMProvider,
     clearSession,
   };
