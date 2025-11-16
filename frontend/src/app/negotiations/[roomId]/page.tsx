@@ -12,7 +12,7 @@ import { ChatPanel } from '@/features/negotiation-room/components/ChatPanel';
 import { DecisionModal } from '@/features/negotiation-room/components/DecisionModal';
 import { ForceDecisionModal } from '@/features/negotiation-room/components/ForceDecisionModal';
 import { useNegotiationStream } from '@/features/negotiation-room/hooks/useNegotiationStream';
-import { startNegotiation } from '@/lib/api/negotiation';
+import { startNegotiation, getNegotiationState } from '@/lib/api/negotiation';
 import { ROUTES } from '@/lib/router';
 import { MAX_NEGOTIATION_ROUNDS, NegotiationStatus } from '@/lib/constants';
 
@@ -20,7 +20,7 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
   const router = useRouter();
   const { roomId } = params;
   const { negotiationRooms, updateNegotiationRoomStatus } = useSession();
-  const { initializeRoom, rooms, setActiveRoom } = useNegotiation();
+  const { initializeRoom, rooms, setActiveRoom, addMessage, updateOffer, setDecision } = useNegotiation();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +51,40 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
       initializeRoom(roomId, MAX_NEGOTIATION_ROUNDS);
       setActiveRoom(roomId);
 
-      // Start negotiation
+      // If the negotiation is already completed, don't start it again - just load the historical data
+      if (room.status === NegotiationStatus.COMPLETED) {
+        console.log('Negotiation already completed - loading historical data');
+        setLoading(true);
+        try {
+          const state = await getNegotiationState(roomId);
+          
+          // Load messages into store (API returns conversation_history)
+          if (state.conversation_history) {
+            state.conversation_history.forEach((message) => {
+              addMessage(roomId, message);
+            });
+          }
+          
+          // Load offers into store (API returns current_offers with seller_name already included)
+          if (state.current_offers) {
+            Object.entries(state.current_offers).forEach(([sellerId, offerWithName]) => {
+              const { seller_name, ...offer } = offerWithName;
+              updateOffer(roomId, sellerId, seller_name, offer);
+            });
+          }
+          
+          console.log('Historical data loaded successfully');
+        } catch (err: any) {
+          console.error('Failed to load historical data:', err);
+          setError(err.message || 'Failed to load negotiation history');
+        } finally {
+          setNegotiationStarted(false); // Don't connect to SSE for completed negotiations
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Start negotiation for PENDING or ACTIVE rooms
       setLoading(true);
       try {
         await startNegotiation(roomId);
@@ -80,7 +113,7 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
     };
 
     initNegotiation();
-  }, [roomId, room, router, initializeRoom, setActiveRoom, updateNegotiationRoomStatus]);
+  }, [roomId, room, router, initializeRoom, setActiveRoom, updateNegotiationRoomStatus, addMessage, updateOffer]);
 
   // Setup SSE stream - ONLY after negotiation has started
   useNegotiationStream({
@@ -95,9 +128,13 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
   }
 
   if (loading) {
+    const loadingMessage = room?.status === NegotiationStatus.COMPLETED 
+      ? "Loading negotiation history..." 
+      : "Starting negotiation...";
+    
     return (
       <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-        <LoadingSpinner size="lg" label="Starting negotiation..." />
+        <LoadingSpinner size="lg" label={loadingMessage} />
       </div>
     );
   }
@@ -165,19 +202,21 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="mt-6 flex justify-end space-x-4">
-          <Button variant="ghost" onClick={() => router.push(ROUTES.NEGOTIATIONS)}>
-            Stop
-          </Button>
-          <Button 
-            variant="secondary" 
-            onClick={() => setShowForceDecisionModal(true)}
-            disabled={negotiationState?.decision !== undefined}
-          >
-            Force Decision
-          </Button>
-        </div>
+        {/* Action Buttons - Hide for completed negotiations */}
+        {room.status !== NegotiationStatus.COMPLETED && (
+          <div className="mt-6 flex justify-end space-x-4">
+            <Button variant="ghost" onClick={() => router.push(ROUTES.NEGOTIATIONS)}>
+              Stop
+            </Button>
+            <Button 
+              variant="secondary" 
+              onClick={() => setShowForceDecisionModal(true)}
+              disabled={negotiationState?.decision !== undefined}
+            >
+              Force Decision
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Decision Modal (Auto-shown on completion) */}
