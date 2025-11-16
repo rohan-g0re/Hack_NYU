@@ -65,60 +65,64 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  SCREEN 1: LANDING / HOME                                        │
 │  - Welcome message                                               │
-│  - "Create New Session" button                                   │
-│  - (Optional) "Load Previous Session" if time permits            │
+│  - "Start New Episode" button                                    │
+│  - (Optional) "Load Previous Episode" if time permits            │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  SCREEN 2: CONFIGURATION                                         │
+│  SCREEN 2: EPISODE CONFIGURATION WIZARD                          │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Step 1: Configure Buyer                                  │   │
-│  │  - Name, Budget, Shopping List                            │   │
+│  │  Step 1: Add Seller Agents (One by One)                   │   │
+│  │  - Seller identity, inventory, internal profile           │   │
+│  │  - Repeat up to 10 sellers                                │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Step 2: Add Sellers (up to 10)                           │   │
-│  │  - Name, Inventory, Profile                               │   │
+│  │  Step 2: Configure Buyer Purchase Plan                     │   │
+│  │  - Per-item: name, quantity, min/max price                │   │
+│  │  - NO global budget concept                               │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Step 3: LLM Settings                                      │   │
-│  │  - Provider (LM Studio / OpenRouter)                       │   │
-│  │  - Model selection                                         │   │
+│  │  Step 3: LLM Settings (LM Studio Only)                     │   │
+│  │  - Model selection, temperature, max tokens               │   │
 │  └──────────────────────────────────────────────────────────┘   │
-│  [Initialize Marketplace] button                                 │
+│  [Generate Negotiations] button                                  │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  SCREEN 3: NEGOTIATION DASHBOARD                                 │
-│  - List of items to negotiate                                    │
-│  - For each item: Available sellers + [Start] button             │
-│  - Budget tracker                                                │
+│  - List of items from buyer purchase plan                        │
+│  - For each item: Matched sellers + negotiation status           │
+│  - Items without sellers marked as "Unfulfillable"               │
+│  - [Start Negotiation] per item                                  │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  SCREEN 4: NEGOTIATION ROOM (Per Item)                           │
+│  SCREEN 4: PER-ITEM NEGOTIATION ROOM                             │
 │  ┌────────────────┐  ┌──────────────────────────────────────┐   │
 │  │  Current       │  │       Live Chat                       │   │
-│  │  Offers        │  │  - Buyer messages                     │   │
+│  │  Offers        │  │  - Buyer messages to matched sellers  │   │
 │  │  Panel         │  │  - Seller responses (streaming)       │   │
-│  │                │  │  - @mentions highlighted              │   │
+│  │  (This Item)   │  │  - @mentions for specific sellers     │   │
 │  └────────────────┘  └──────────────────────────────────────┘   │
+│  - Item: X, Quantity: Y, Price Range: $A-$B                     │
 │  - Progress: Round X/10                                          │
 │  - [Force Decision] button (optional)                            │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  DECISION MODAL                                                  │
-│  - Selected seller + final price                                 │
-│  - Decision reason                                               │
-│  - [Next Item] or [View Summary] button                          │
+│  - Selected seller + final price for this item                   │
+│  - LLM-generated decision reason                                 │
+│  - [Next Item] or [View Final Receipt] button                    │
 └────────────────────────┬────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  SCREEN 5: SESSION SUMMARY                                       │
-│  - Total budget vs spent                                         │
-│  - List of purchases                                             │
-│  - Failed items                                                  │
-│  - [Download Report] [Start New Session]                         │
+│  SCREEN 5: FINAL RECEIPT                                         │
+│  - Episode summary with timestamp                                │
+│  - Itemized table: item, seller, price, total                   │
+│  - Items with "No Deal" status and reasons                       │
+│  - Total items purchased and total spend                         │
+│  - [Download Report] [Start New Episode]                         │
 └─────────────────────────────────────────────────────────────────┘
                          ▼
                       END
@@ -128,11 +132,12 @@
 
 | Action | Screen | Backend Call | User Feedback |
 |--------|--------|--------------|---------------|
-| Create session | Configuration | POST /simulation/initialize | Loading spinner → Redirect |
-| Start negotiation | Dashboard | POST /negotiation/{id}/start | Transition to chat |
-| Watch negotiation | Negotiation Room | GET /stream (SSE) | Live message updates |
+| Create episode | Configuration | POST /episode/initialize | Loading spinner → Redirect |
+| Generate negotiations | Dashboard | POST /episode/{id}/generate | Match sellers to items |
+| Start item negotiation | Dashboard | POST /negotiation/{item}/start | Transition to per-item chat |
+| Watch negotiation | Negotiation Room | GET /negotiation/{id}/stream (SSE) | Live message updates |
 | View decision | Negotiation Room | Auto from stream | Modal popup |
-| View summary | Summary | GET /summary | Display results |
+| View final receipt | Receipt | GET /episode/{id}/receipt | Display itemized results |
 
 ---
 
@@ -173,31 +178,37 @@
 
 ---
 
-### 3.2 Screen 2: Configuration Wizard
+### 3.2 Screen 2: Episode Configuration Wizard
 
-**Purpose:** Collect all session configuration in one screen
+**Purpose:** Collect all episode configuration in step-by-step process
 
-**Layout:** Single-page form with collapsible sections
+**Layout:** Multi-step wizard with progressive sections
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Session Configuration                              [X Close] │
+│  Episode Configuration (Step 2/3)                   [X Close] │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  │
-│  ┃ 👤 Buyer Configuration                              ▼  ┃  │
+│  ┃ 👤 Buyer Purchase Plan                              ▼  ┃  │
 │  ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫  │
-│  ┃  Name: [________________________]                      ┃  │
+│  ┃  Buyer Name: [________________________]                 ┃  │
 │  ┃                                                         ┃  │
-│  ┃  Budget Range:                                          ┃  │
-│  ┃    Min: [$________]  Max: [$________]                  ┃  │
-│  ┃                                                         ┃  │
-│  ┃  Shopping List:                                         ┃  │
+│  ┃  Purchase Plan (Per-Item Constraints):                  ┃  │
 │  ┃  ┌──────────────────────────────────────────────┐      ┃  │
-│  ┃  │ Item: [________] Quantity: [__] [X Remove]   │      ┃  │
-│  ┃  │ Item: [________] Quantity: [__] [X Remove]   │      ┃  │
+│  ┃  │ Item: [Laptop____] Qty: [2_]                 │      ┃  │
+│  ┃  │ Min Price: [$900] Max Price: [$1200]         │      ┃  │
+│  ┃  │ [X Remove]                                    │      ┃  │
 │  ┃  └──────────────────────────────────────────────┘      ┃  │
-│  ┃  [+ Add Item]                                           ┃  │
+│  ┃  ┌──────────────────────────────────────────────┐      ┃  │
+│  ┃  │ Item: [Mouse____] Qty: [5_]                  │      ┃  │
+│  ┃  │ Min Price: [$15_] Max Price: [$25_]          │      ┃  │
+│  ┃  │ [X Remove]                                    │      ┃  │
+│  ┃  └──────────────────────────────────────────────┘      ┃  │
+│  ┃  [+ Add Item to Purchase Plan]                          ┃  │
+│  ┃                                                         ┃  │
+│  ┃  Note: No global budget - each item has independent     ┃  │
+│  ┃  min/max price constraints only.                        ┃  │
 │  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │
 │                                                               │
 │  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  │
@@ -221,25 +232,28 @@
 │  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │
 │                                                               │
 │  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  │
-│  ┃ 🤖 LLM Configuration                                 ▼  ┃  │
+│  ┃ 🤖 LLM Configuration (LM Studio Only)                ▼  ┃  │
 │  ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫  │
-│  ┃  Provider: (•) LM Studio  ( ) OpenRouter               ┃  │
 │  ┃  Model: [llama-3-8b-instruct        ▼]                 ┃  │
 │  ┃  Temperature: [0.7____] Max Tokens: [500___]           ┃  │
+│  ┃                                                         ┃  │
+│  ┃  Note: All agents use LM Studio backend for inference. ┃  │
 │  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛  │
 │                                                               │
-│               [Initialize Marketplace] [Use Sample Data]      │
+│               [Initialize Episode] [Use Sample Data]          │
 │                                                               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
 
-**Buyer Section:**
-- Text input for name
-- Number inputs for budget (with validation: min < max)
-- Dynamic list for shopping items
+**Buyer Purchase Plan Section:**
+- Text input for buyer name
+- Dynamic list for purchase plan items
+- Per-item constraints: name, quantity, min price, max price
+- Validation: min price < max price per item
 - Add/remove item buttons
+- No global budget concept
 
 **Sellers Section:**
 - Repeatable seller cards (max 10)
@@ -252,101 +266,106 @@
 - Color-coded by priority/style for quick scanning
 
 **LLM Section:**
-- Radio buttons for provider selection
-- Dropdown for model (populated from backend /llm/status)
+- Dropdown for model selection (LM Studio models only)
 - Sliders for temperature and max_tokens
+- Note about LM Studio requirement
 
 **Helpers:**
-- "Use Sample Data" button - loads pre-filled demo config
+- "Use Sample Data" button - loads pre-filled demo episode config
 - Real-time validation feedback (red borders, error messages)
 - Progress indicator: "X/10 sellers added"
+- Step-by-step wizard navigation
 
 **Design Notes:**
-- Use accordion/collapse to reduce visual clutter
-- Auto-expand next section when previous is valid
-- Sticky "Initialize" button at bottom
-- Consider multi-step wizard if single page feels overwhelming
+- Multi-step wizard approach for better UX
+- Progressive disclosure of configuration sections
+- Step 1: Add sellers → Step 2: Configure buyer plan → Step 3: LLM settings
+- Auto-validation at each step before proceeding
+- "Initialize Episode" creates session and matches sellers to items
 
 ---
 
 ### 3.3 Screen 3: Negotiation Dashboard
 
-**Purpose:** Overview of all items and their negotiation status
+**Purpose:** Overview of all items in buyer's purchase plan and their seller matching status
 
 **Layout:**
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  Session: #550e8400  |  Buyer: John Doe  |  Budget: $3000    │
+│  Episode: #550e8400  |  Buyer: John Doe  |  Items: 2/2       │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
-│  Budget Overview                                              │
+│  Purchase Plan Overview                                       │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │ Total: $3000 | Spent: $0 | Remaining: $3000            │  │
-│  │ ████████████████████████████████████████░░░░░░  0%     │  │
+│  │ Items Planned: 2 | Negotiated: 0 | Completed: 0        │  │
+│  │ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0%      │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
-│  Items to Negotiate (2)                                       │
+│  Items from Purchase Plan (2)                                 │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │  💻 Laptop (Need: 2 units)                             │  │
-│  │  Available Sellers: TechStore, GadgetHub, CompuWorld   │  │
-│  │  Price Range: $950 - $1200                             │  │
+│  │  💻 Laptop (Want: 2 units)                             │  │
+│  │  Price Constraints: $900 - $1200 per unit              │  │
+│  │  Matched Sellers: TechStore, GadgetHub, CompuWorld     │  │
 │  │                                                         │  │
-│  │  Status: Pending              [Start Negotiation]      │  │
+│  │  Status: Ready to Negotiate   [Start Negotiation]      │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │  🖱️ Mouse (Need: 5 units)                              │  │
-│  │  Available Sellers: None                                │  │
+│  │  🖱️ Mouse (Want: 5 units)                              │  │
+│  │  Price Constraints: $15 - $25 per unit                 │  │
+│  │  Matched Sellers: None Available                        │  │
 │  │                                                         │  │
-│  │  Status: No sellers available                          │  │
+│  │  Status: Unfulfillable        [Skip Item]              │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
-│                                       [View All Sellers Info] │
+│                                       [View Episode Details] │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Elements:**
 
 **Header Bar:**
-- Session ID
+- Episode ID
 - Buyer name
-- Total budget
-- (Optional) Time elapsed
+- Item count (completed/total)
+- (Optional) Episode creation time
 
-**Budget Widget:**
-- Visual progress bar
-- Real-time updates as negotiations complete
-- Color changes: green (plenty left) → yellow (low) → red (over budget)
+**Progress Widget:**
+- Visual progress bar showing negotiation completion
+- Real-time updates as item negotiations finish
+- Color changes: gray (not started) → blue (in progress) → green (completed)
 
 **Item Cards:**
 Each card shows:
 - Item emoji/icon + name
-- Quantity needed
-- List of available sellers (clickable to see details)
-- Price range (lowest least_price to highest selling_price)
+- Quantity wanted from purchase plan
+- Per-item price constraints (min - max per unit)
+- List of matched sellers (based on inventory)
 - Status badge:
-  - **Pending:** Gray, "Start Negotiation" button
+  - **Ready:** Gray, "Start Negotiation" button
   - **In Progress:** Blue, "Resume" button + live indicator
-  - **Completed:** Green, "View Details" button
-  - **No Sellers:** Red, disabled
+  - **Completed:** Green, "View Details" button + final price
+  - **Unfulfillable:** Red, "Skip Item" button
 
 **Interactions:**
-- Click "Start Negotiation" → Transition to Negotiation Room
-- Click seller name → Popup with seller details
-- Click completed item → Show decision modal
+- Click "Start Negotiation" → Transition to Per-Item Negotiation Room
+- Click seller name → Popup with seller details and inventory
+- Click "View Details" → Show negotiation summary and decision
+- Click "Skip Item" → Mark as unfulfillable, continue to next
 
 **Design Notes:**
-- Use cards for clear separation
-- Status colors: Gray, Blue (pulsing), Green, Red
-- Empty state for "no sellers" with helpful message
+- Use cards for clear item separation
+- Status colors: Gray (ready), Blue (in progress), Green (completed), Red (unfulfillable)
+- Clear indication of seller matching results
+- Focus on per-item constraints rather than global budget
 
 ---
 
-### 3.4 Screen 4: Negotiation Room
+### 3.4 Screen 4: Per-Item Negotiation Room
 
-**Purpose:** Real-time chat interface for buyer-seller negotiation
+**Purpose:** Real-time chat interface for buyer negotiating with matched sellers for a specific item
 
-**Layout:** Split-screen design
+**Layout:** Split-screen design focused on single item
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -357,12 +376,13 @@ Each card shows:
 │  │              │   │  💬 Live Chat                        │ │
 │  │  Current     │   ├──────────────────────────────────────┤ │
 │  │  Offers      │   │                                      │ │
-│  │              │   │  [Buyer] 10:30:01                    │ │
-│  │  TechStore   │   │  Hello @TechStore and @GadgetHub!    │ │
-│  │  💰 $1150    │   │  I'm looking for 2 laptops...        │ │
+│  │  (Laptop)    │   │  [Buyer] 10:30:01                    │ │
+│  │              │   │  Hello @TechStore and @GadgetHub!    │ │
+│  │  TechStore   │   │  I need 2 laptops. What can you     │ │
+│  │  💰 $1150    │   │  offer?                              │ │
 │  │  📦 2 units  │   │                                      │ │
 │  │  🕐 10:31    │   │  [TechStore] 10:30:15                │ │
-│  │  [Best]      │   │  Hi there! 😊 I can offer $1150...   │ │
+│  │  [Best]      │   │  Hi! 😊 I can offer $1150 per unit   │ │
 │  │              │   │  💰 Offer: $1150 per unit            │ │
 │  │  GadgetHub   │   │                                      │ │
 │  │  💰 $1100    │   │  [GadgetHub] 10:30:18                │ │
@@ -370,39 +390,42 @@ Each card shows:
 │  │  🕐 10:32    │   │  💰 Offer: $1100 per unit            │ │
 │  │  [Lowest]    │   │                                      │ │
 │  │              │   │  [Buyer] 10:30:45                    │ │
-│  │  CompuWorld  │   │  Thanks! @GadgetHub that's close     │ │
-│  │  💰 $1180    │   │  to my budget...                     │ │
-│  │  📦 2 units  │   │                                      │ │
-│  │  🕐 10:29    │   │  [typing...] ⏳                      │ │
-│  │              │   │                                      │ │
-│  └──────────────┘   │                                      │ │
+│  │              │   │  @GadgetHub that's within my range!  │ │
+│  └──────────────┘   │  Can you match quantity?              │ │
 │                     │                                      │ │
-│  Budget Info        │                                      │ │
-│  Max: $3000         │                                      │ │
-│  Target: ~$1000     │                                      │ │
+│  Item Constraints   │  [typing...] ⏳                      │ │
+│  Want: 2 units      │                                      │ │
+│  Min: $900/unit     │                                      │ │
+│  Max: $1200/unit    │                                      │ │
 │                     └──────────────────────────────────────┘ │
 │                                                               │
 │                                      [Force Decision] [Stop]  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Left Panel: Current Offers**
+**Left Panel: Current Offers (This Item Only)**
 
 **Structure:**
-- Seller cards in a vertical list
+- Seller cards showing only matched sellers for this specific item
 - Auto-sorted by price (lowest to highest)
 - Each card shows:
   - Seller name with style badge (😊 sweet / 😠 rude)
-  - Current price (large, bold)
-  - Quantity
+  - Current price per unit (large, bold)
+  - Available quantity for this item
   - Last updated time
-  - Badge: "Best Price" or "Lowest" or "Highest"
+  - Badge: "Best Price" or "Within Budget" or "Over Budget"
+
+**Item Constraints Panel:**
+- Shows buyer's constraints for this specific item
+- Wanted quantity
+- Min/max price per unit (from purchase plan)
+- No global budget references
 
 **Visual Indicators:**
-- Green highlight for lowest price
-- Red highlight for highest price
+- Green highlight for best price within constraints
+- Red highlight for prices outside min/max range
 - Pulsing animation when offer updates
-- Strikethrough for old prices (show price history)
+- Clear indication if seller can fulfill quantity needed
 
 **Right Panel: Live Chat**
 
@@ -505,25 +528,26 @@ Each card shows:
 
 ---
 
-### 3.6 Screen 5: Session Summary
+### 3.6 Screen 5: Final Receipt
 
-**Purpose:** Final overview of all purchases and budget usage
+**Purpose:** Episode summary showing itemized results of all negotiations
 
 **Layout:**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  🎊 Shopping Complete!                                        │
+│  🎊 Episode Complete!                                         │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │ 💰 Budget Summary                                        │ │
+│  │ 📋 Episode Summary                                       │ │
 │  ├─────────────────────────────────────────────────────────┤ │
-│  │  Initial Budget:     $3000                               │ │
+│  │  Episode ID:         #550e8400                           │ │
+│  │  Buyer:              John Doe                            │ │
+│  │  Completed:          November 16, 2025 at 10:45 AM      │ │
+│  │  Items Planned:      2                                   │ │
+│  │  Items Purchased:    1                                   │ │
 │  │  Total Spent:        $2160                               │ │
-│  │  Remaining:          $840                                │ │
-│  │                                                           │ │
-│  │  ████████████████████████░░░░░░░░░░  72% Utilized       │ │
 │  └─────────────────────────────────────────────────────────┘ │
 │                                                               │
 │  ┌─────────────────────────────────────────────────────────┐ │
@@ -531,9 +555,10 @@ Each card shows:
 │  ├─────────────────────────────────────────────────────────┤ │
 │  │  💻 Laptop x2                                            │ │
 │  │  ├─ Seller: GadgetHub                                    │ │
-│  │  ├─ Price: $1080/unit                                    │ │
-│  │  ├─ Total: $2160                                         │ │
-│  │  ├─ Rounds: 5 (2m 25s)                                   │ │
+│  │  ├─ Final Price: $1080/unit                              │ │
+│  │  ├─ Total Cost: $2160                                    │ │
+│  │  ├─ Constraint Range: $900-$1200                         │ │
+│  │  ├─ Negotiation: 5 rounds (2m 25s)                       │ │
 │  │  └─ [View Chat Log]                                      │ │
 │  └─────────────────────────────────────────────────────────┘ │
 │                                                               │
@@ -541,51 +566,58 @@ Each card shows:
 │  │ ❌ Failed Items (1)                                      │ │
 │  ├─────────────────────────────────────────────────────────┤ │
 │  │  🖱️ Mouse x5                                             │ │
-│  │  └─ Reason: No sellers have this item in inventory      │ │
+│  │  ├─ Constraint Range: $15-$25                            │ │
+│  │  └─ Reason: No sellers available for this item          │ │
 │  └─────────────────────────────────────────────────────────┘ │
 │                                                               │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │ 📊 Negotiation Metrics                                   │ │
+│  │ 📊 Episode Metrics                                       │ │
 │  ├─────────────────────────────────────────────────────────┤ │
-│  │  Average Rounds:           5                             │ │
-│  │  Average Duration:         2m 25s                        │ │
-│  │  Total Messages:           18                            │ │
+│  │  Total Negotiation Rounds:    5                          │ │
+│  │  Total Duration:               2m 25s                    │ │
+│  │  Total Messages Exchanged:     18                        │ │
+│  │  Success Rate:                 50% (1/2 items)           │ │
 │  └─────────────────────────────────────────────────────────┘ │
 │                                                               │
-│         [Download PDF Report] [Start New Session] [Home]     │
+│         [Download PDF Report] [Start New Episode] [Home]     │
 │                                                               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Sections:**
 
-1. **Budget Summary Card:**
-   - Visual progress bar
-   - Clear before/after comparison
-   - Utilization percentage
+1. **Episode Summary Card:**
+   - Episode metadata (ID, buyer, timestamp)
+   - High-level statistics (items planned vs purchased)
+   - Total spend across all successful purchases
 
 2. **Successful Purchases:**
-   - Expandable cards for each item
-   - Show key details (seller, price, stats)
+   - Itemized list with full details per purchase
+   - Show seller chosen, final price, total cost
+   - Display original constraint range for context
+   - Negotiation stats (rounds, duration)
    - Link to view full chat log
 
 3. **Failed Items:**
-   - Clear reasons for failure
-   - Suggestions (e.g., "Try adding more sellers")
+   - Items from purchase plan that couldn't be fulfilled
+   - Show original constraints that couldn't be met
+   - Clear reasons for failure (no sellers, price mismatch, etc.)
 
-4. **Metrics:**
-   - Aggregate stats across all negotiations
-   - Helpful for analyzing agent behavior
+4. **Episode Metrics:**
+   - Aggregate stats across all negotiations in this episode
+   - Success rate calculation
+   - Total time and message counts
 
 **Actions:**
-- Download PDF report (backend generates)
-- Start new session (resets state)
+- Download PDF report (episode receipt)
+- Start new episode (new configuration)
 - Go to home
 
 **Design Notes:**
-- Celebration theme (success colors, emojis)
+- Receipt-style layout (professional, itemized)
 - Clear success vs failure visual distinction
-- Easy to scan structure
+- Focus on per-item results rather than budget utilization
+- Episode-centric language throughout
 
 ---
 
@@ -695,25 +727,60 @@ App
 
 ```javascript
 {
-  session: {
+  episode: {
     id: null,
-    status: 'idle', // idle | initializing | active | completed
+    status: 'idle', // idle | configuring | initializing | active | completed
     buyer: {
-      id: null,
       name: '',
-      budget: { min: 0, max: 0 },
-      shoppingList: []
+      purchasePlan: [
+        {
+          itemName: 'Laptop',
+          quantity: 2,
+          minPrice: 900,
+          maxPrice: 1200
+        }
+      ]
     },
-    sellers: [],
-    llmConfig: {},
+    sellers: [
+      {
+        id: 'seller_1',
+        name: 'TechStore',
+        profile: {
+          customerRetentionWeight: 0.7,
+          profitMaximizationWeight: 0.3,
+          style: 'sweet'
+        },
+        inventory: [
+          {
+            itemName: 'Laptop',
+            costPrice: 800,
+            sellingPrice: 1200,
+            leastPrice: 1000,
+            availableQuantity: 10
+          }
+        ]
+      }
+    ],
+    llmConfig: {
+      model: 'llama-3-8b-instruct',
+      temperature: 0.7,
+      maxTokens: 500
+    },
     createdAt: null
   },
 
   negotiations: {
-    'room_id_1': {
-      roomId: 'room_id_1',
+    'negotiation_id_1': {
+      negotiationId: 'negotiation_id_1',
+      episodeId: 'episode_id',
       itemName: 'Laptop',
       status: 'pending', // pending | active | completed
+      matchedSellers: ['seller_1', 'seller_2'],
+      buyerConstraints: {
+        quantity: 2,
+        minPrice: 900,
+        maxPrice: 1200
+      },
       currentRound: 0,
       maxRounds: 10,
       messages: [],
@@ -724,11 +791,12 @@ App
   },
 
   ui: {
-    activeNegotiationRoom: null,
+    activeNegotiationId: null,
     showDecisionModal: false,
     notifications: [],
     loading: {
-      initializingSession: false,
+      initializingEpisode: false,
+      generatingNegotiations: false,
       startingNegotiation: false
     },
     errors: {}
@@ -740,25 +808,31 @@ App
 
 **Key Actions:**
 
-1. **Initialize Session:**
-   - User submits config → Set loading
-   - API call → Store session data
+1. **Initialize Episode:**
+   - User submits episode config → Set loading
+   - API call to create episode → Store episode data
    - Navigate to dashboard
 
-2. **Start Negotiation:**
-   - User clicks "Start" → Set loading
-   - API call → Open SSE connection
-   - Navigate to negotiation room
+2. **Generate Negotiations:**
+   - System matches sellers to buyer's purchase plan items
+   - Creates negotiation records for each viable item
+   - Updates dashboard with matched/unmatched status
 
-3. **Receive SSE Events:**
-   - Event: buyer_message → Add to messages[]
-   - Event: seller_response → Add to messages[], update offers{}
-   - Event: negotiation_complete → Show decision modal
+3. **Start Item Negotiation:**
+   - User clicks "Start Negotiation" for specific item → Set loading
+   - API call → Open SSE connection for that negotiation
+   - Navigate to per-item negotiation room
 
-4. **Complete Negotiation:**
-   - Close SSE connection
-   - Update negotiation status
-   - Navigate to next item or summary
+4. **Receive SSE Events:**
+   - Event: buyer_message → Add to messages[] for this negotiation
+   - Event: seller_response → Add to messages[], update offers{} for this item
+   - Event: negotiation_complete → Show decision modal for this item
+
+5. **Complete Item Negotiation:**
+   - Close SSE connection for this item
+   - Update negotiation status to completed
+   - Store decision/outcome
+   - Navigate to next item or final receipt
 
 ### 5.3 Recommended Library
 
@@ -1117,19 +1191,19 @@ useEffect(() => {
 - [ ] Create basic routing structure
 - [ ] Setup state management (Context/Zustand)
 
-**Hour 1-3: Configuration Screen**
-- [ ] Build BuyerConfigForm
-- [ ] Build SellerCard component (repeatable)
-- [ ] Implement form validation
-- [ ] Connect to POST /simulation/initialize API
-- [ ] Add "Use Sample Data" helper
+**Hour 1-3: Configuration Wizard**
+- [ ] Build BuyerPurchasePlanForm (per-item constraints)
+- [ ] Build SellerCard component (repeatable, step-by-step)
+- [ ] Implement form validation (price ranges, inventory)
+- [ ] Connect to POST /episode/initialize API
+- [ ] Add "Use Sample Data" helper for episode config
 
 **Hour 3-5: Dashboard & Navigation**
-- [ ] Build DashboardPage layout
-- [ ] Create ItemCard component
-- [ ] Implement budget tracker
-- [ ] Connect to GET /simulation/{id} API
-- [ ] Add navigation to negotiation room
+- [ ] Build DashboardPage layout (episode-based)
+- [ ] Create ItemCard component (per-item constraints display)
+- [ ] Implement negotiation progress tracker
+- [ ] Connect to GET /episode/{id} API for seller matching
+- [ ] Add navigation to per-item negotiation rooms
 
 **Hour 5-7: Negotiation Room**
 - [ ] Build split-screen layout (offers + chat)
@@ -1139,12 +1213,12 @@ useEffect(() => {
 - [ ] Handle real-time message updates
 - [ ] Implement typing indicators
 
-**Hour 7-8: Summary & Polish**
-- [ ] Build SummaryPage layout
-- [ ] Connect to GET /summary API
-- [ ] Add Decision Modal
+**Hour 7-8: Final Receipt & Polish**
+- [ ] Build Final Receipt layout (episode summary)
+- [ ] Connect to GET /episode/{id}/receipt API
+- [ ] Add Decision Modal (per-item)
 - [ ] Final styling pass
-- [ ] Test end-to-end flow
+- [ ] Test end-to-end episode flow
 - [ ] Fix critical bugs
 
 ---
@@ -1152,21 +1226,21 @@ useEffect(() => {
 ### Priority Features (Must-Have)
 
 **P0 (Critical Path):**
-- ✅ Configuration form with validation
-- ✅ Session initialization
-- ✅ Dashboard with item cards
-- ✅ Negotiation room with SSE streaming
-- ✅ Chat message display (buyer + sellers)
-- ✅ Offers panel with real-time updates
-- ✅ Decision modal
-- ✅ Summary screen
+- ✅ Episode configuration wizard (step-by-step)
+- ✅ Episode initialization with seller matching
+- ✅ Dashboard with per-item negotiation cards
+- ✅ Per-item negotiation room with SSE streaming
+- ✅ Chat message display (buyer + matched sellers)
+- ✅ Offers panel with item-specific constraints
+- ✅ Decision modal (per-item)
+- ✅ Final receipt screen (episode summary)
 
 **P1 (Important):**
-- Sample data loader
+- Sample episode data loader
 - Error handling (toasts)
 - Loading states
 - Basic animations (fade, slide)
-- Budget tracker updates
+- Negotiation progress tracker updates
 
 **P2 (Nice-to-Have):**
 - Advanced animations (confetti, pulse)
@@ -1176,10 +1250,10 @@ useEffect(() => {
 - Accessibility (ARIA labels)
 
 **P3 (If Extra Time):**
-- Previous session viewer
-- Seller detail popups
-- Chat log export
-- Analytics dashboard
+- Previous episode viewer
+- Seller detail popups with inventory
+- Chat log export per item
+- Episode analytics dashboard
 
 ---
 
@@ -1187,16 +1261,17 @@ useEffect(() => {
 
 ### 12.1 Manual Testing Checklist
 
-**Configuration Flow:**
-- [ ] Submit valid config → Success
-- [ ] Submit invalid prices → Show errors
-- [ ] Add/remove sellers → Updates correctly
-- [ ] "Use Sample Data" → Populates form
+**Episode Configuration Flow:**
+- [ ] Submit valid episode config → Success
+- [ ] Submit invalid price constraints → Show errors
+- [ ] Add/remove sellers step-by-step → Updates correctly
+- [ ] "Use Sample Data" → Populates episode form
 
 **Dashboard:**
-- [ ] Shows all items correctly
-- [ ] "Start" button navigates to negotiation
-- [ ] Budget displays correctly
+- [ ] Shows all items from purchase plan correctly
+- [ ] Shows seller matching results
+- [ ] "Start Negotiation" button navigates to per-item room
+- [ ] Progress tracker displays correctly
 
 **Negotiation Room:**
 - [ ] SSE connects successfully
@@ -1205,10 +1280,11 @@ useEffect(() => {
 - [ ] @mentions highlighted
 - [ ] Decision modal appears on completion
 
-**Summary:**
-- [ ] Shows all purchases
-- [ ] Budget calculations correct
-- [ ] Failed items displayed
+**Final Receipt:**
+- [ ] Shows all successful purchases with details
+- [ ] Episode summary information correct  
+- [ ] Failed items with reasons displayed
+- [ ] Total spend calculations correct
 
 ### 12.2 Browser Testing
 
@@ -1221,9 +1297,9 @@ useEffect(() => {
 **Handle gracefully:**
 - No internet connection
 - LM Studio not running
-- Session expires
-- Zero sellers for all items
-- Budget exceeded
+- Episode expires or becomes invalid
+- Zero sellers available for purchase plan items
+- Price constraints impossible to meet
 
 ---
 
