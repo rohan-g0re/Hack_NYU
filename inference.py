@@ -13,7 +13,7 @@ except ImportError as exc:  # pragma: no cover - makes error clearer for users
 # === CHANGE ME ===
 CONFIG = {
     "api_base": "http://localhost:1234/v1",  # ← LM Studio server URL
-    "model": "lmstudio-community/Meta-Llama-3-8B-Instruct",  # ← pick the model you started in LM Studio
+    "model": "lmstudio-community/qwen3-1.7b",  # ← pick the model you started in LM Studio
     "prompt": "Can you tell me who are the sidemen?",  # ← validation query
     "stream": True,  # ← set False to wait for a single response payload
     "generation": {
