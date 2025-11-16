@@ -139,7 +139,8 @@ async def main():
     print(f"   LLM_ENABLE_OPENROUTER: {settings.LLM_ENABLE_OPENROUTER}")
     print(f"   OPENROUTER_BASE_URL: {settings.OPENROUTER_BASE_URL}")
     print(f"   OPENROUTER_DEFAULT_MODEL: {settings.OPENROUTER_DEFAULT_MODEL}")
-    print(f"   OPENROUTER_TIMEOUT: {settings.OPENROUTER_TIMEOUT}")
+    openrouter_timeout = getattr(settings, "OPENROUTER_TIMEOUT", "not defined")
+    print(f"   OPENROUTER_TIMEOUT: {openrouter_timeout}")
     print(f"   OPENROUTER_API_KEY: {'*' * 20 if settings.OPENROUTER_API_KEY else 'NOT SET'}")
     
     if not settings.LLM_ENABLE_OPENROUTER:
