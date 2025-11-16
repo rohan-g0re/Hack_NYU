@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import type { BuyerDecision } from '@/lib/types';
 import { formatCurrency, formatDuration } from '@/utils/formatters';
 import { ROUTES } from '@/lib/router';
@@ -25,8 +27,14 @@ export function DecisionModal({
   duration,
 }: DecisionModalProps) {
   const router = useRouter();
+  const [isNavigating, setIsNavigating] = useState(false);
 
-  const handleViewSummary = () => {
+  const handleViewSummary = async () => {
+    setIsNavigating(true);
+    
+    // Wait 2 seconds to ensure backend has saved the decision
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     onClose();
     router.push(ROUTES.SUMMARY);
   };
@@ -125,11 +133,18 @@ export function DecisionModal({
 
         {/* Action Buttons */}
         <div className="flex justify-center space-x-4">
-          <Button variant="ghost" onClick={handleNextItem}>
+          <Button variant="ghost" onClick={handleNextItem} disabled={isNavigating}>
             Next Item
           </Button>
-          <Button onClick={handleViewSummary}>
-            View Episode Summary
+          <Button onClick={handleViewSummary} disabled={isNavigating}>
+            {isNavigating ? (
+              <>
+                <LoadingSpinner size="sm" className="mr-2" />
+                Preparing Summary...
+              </>
+            ) : (
+              'View Episode Summary'
+            )}
           </Button>
         </div>
       </div>

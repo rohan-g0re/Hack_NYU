@@ -9,7 +9,7 @@ import { ErrorMessage } from '@/components/ErrorMessage';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { getSessionSummary } from '@/lib/api/simulation';
-import type { SessionSummary } from '@/lib/types';
+import type { SessionSummary, PurchaseSummary } from '@/lib/types';
 import { formatCurrency, formatDateTime, formatDuration } from '@/utils/formatters';
 import { calculatePercentage } from '@/utils/helpers';
 import { ROUTES } from '@/lib/router';
@@ -20,6 +20,7 @@ export default function SummaryPage() {
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!sessionId) {
@@ -27,13 +28,26 @@ export default function SummaryPage() {
       return;
     }
 
+    let retryCount = 0;
+    const maxRetries = 2;
+    
     const fetchSummary = async () => {
       try {
         const data = await getSessionSummary(sessionId);
+        
+        // If we get 0 purchases but this is the first load, wait and retry once
+        // This handles the race condition where we navigate before the decision is saved
+        if (data.completed_purchases === 0 && data.total_items_requested > 0 && retryCount < maxRetries) {
+          retryCount++;
+          console.log(`No purchases found yet, retrying in 1.5s (attempt ${retryCount}/${maxRetries})`);
+          setTimeout(fetchSummary, 1500);
+          return;
+        }
+        
         setSummary(data);
+        setLoading(false);
       } catch (err: any) {
         setError(err.message || 'Failed to load summary');
-      } finally {
         setLoading(false);
       }
     };
@@ -49,6 +63,18 @@ export default function SummaryPage() {
   const handleHome = () => {
     clearSession();
     router.push(ROUTES.HOME);
+  };
+
+  const toggleItemExpanded = (index: number) => {
+    setExpandedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
   };
 
   if (loading) {
@@ -124,6 +150,36 @@ export default function SummaryPage() {
           </div>
         </Card>
 
+        {/* Overall Analysis Card - Full Width */}
+        {summary.overall_analysis && (
+          <Card className="mb-8">
+            <div>
+              <h2 className="text-2xl font-bold text-neutral-900 mb-4">🤖 AI Analysis</h2>
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-700 mb-2">Performance Insights</h3>
+                  <p className="text-neutral-900">{summary.overall_analysis.performance_insights}</p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-700 mb-2">Cross-Item Comparison</h3>
+                  <p className="text-neutral-900">{summary.overall_analysis.cross_item_comparison}</p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-neutral-700 mb-2">Recommendations</h3>
+                  <ul className="space-y-2">
+                    {summary.overall_analysis.recommendations.map((rec, i) => (
+                      <li key={i} className="flex items-start space-x-2">
+                        <span className="text-primary-600 font-bold mt-0.5">•</span>
+                        <span className="text-neutral-900">{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             {/* Successful Purchases */}
@@ -136,45 +192,140 @@ export default function SummaryPage() {
                     </h2>
                   </div>
                   <div className="space-y-4">
-                    {summary.purchases.map((purchase, index) => (
-                      <div key={index} className="bg-secondary-50 rounded-lg p-4 border border-secondary-200">
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <h3 className="text-lg font-semibold text-neutral-900">
-                              {purchase.item_name} x{purchase.quantity}
-                            </h3>
-                            <p className="text-sm text-neutral-600">From: {purchase.selected_seller}</p>
+                    {summary.purchases.map((purchase, index) => {
+                      const isExpanded = expandedItems.has(index);
+                      return (
+                        <div key={index} className="bg-secondary-50 rounded-lg p-4 border border-secondary-200">
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <h3 className="text-lg font-semibold text-neutral-900">
+                                {purchase.item_name} x{purchase.quantity}
+                              </h3>
+                              <p className="text-sm text-neutral-600">From: {purchase.selected_seller}</p>
+                            </div>
+                            <Badge variant="completed">Completed</Badge>
                           </div>
-                          <Badge variant="completed">Completed</Badge>
+                          <div className="grid grid-cols-2 gap-4 text-sm mb-3">
+                            <div>
+                              <p className="text-neutral-600">Final Price</p>
+                              <p className="font-semibold text-neutral-900">
+                                {formatCurrency(purchase.final_price_per_unit)}/unit
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-neutral-600">Total Cost</p>
+                              <p className="font-semibold text-secondary-600">
+                                {formatCurrency(purchase.total_cost)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-neutral-600">Negotiation</p>
+                              <p className="font-semibold text-neutral-900">
+                                {purchase.negotiation_rounds} rounds
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-neutral-600">Duration</p>
+                              <p className="font-semibold text-neutral-900">
+                                {formatDuration(purchase.duration_seconds)}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* AI Summary Section */}
+                          {purchase.ai_summary && (
+                            <div className="mt-4 pt-4 border-t border-secondary-300">
+                              <button
+                                onClick={() => toggleItemExpanded(index)}
+                                className="flex items-center justify-between w-full text-left"
+                              >
+                                <span className="text-sm font-semibold text-neutral-700">
+                                  🤖 AI Negotiation Insights
+                                </span>
+                                <svg
+                                  className={`w-5 h-5 text-neutral-600 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                              
+                              {isExpanded && (
+                                <div className="mt-3 space-y-4 text-sm">
+                                  <div>
+                                    <p className="text-neutral-900 italic mb-3">"{purchase.ai_summary.narrative}"</p>
+                                    <div className="inline-block px-3 py-1 bg-primary-100 text-primary-800 rounded-full text-xs font-semibold">
+                                      🏆 {purchase.ai_summary.deal_winner}
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Buyer & Seller Analysis Side by Side */}
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-blue-50 p-3 rounded border border-blue-200">
+                                      <p className="font-semibold text-blue-900 mb-2">👤 Buyer Performance</p>
+                                      <div className="space-y-2">
+                                        <div>
+                                          <p className="text-xs font-semibold text-blue-700">✅ What Went Well</p>
+                                          <p className="text-xs text-blue-900">{purchase.ai_summary.buyer_analysis.what_went_well}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-semibold text-blue-700">💡 Can Improve</p>
+                                          <p className="text-xs text-blue-900">{purchase.ai_summary.buyer_analysis.what_to_improve}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="bg-green-50 p-3 rounded border border-green-200">
+                                      <p className="font-semibold text-green-900 mb-2">🏪 Seller Performance</p>
+                                      <div className="space-y-2">
+                                        <div>
+                                          <p className="text-xs font-semibold text-green-700">✅ What Went Well</p>
+                                          <p className="text-xs text-green-900">{purchase.ai_summary.seller_analysis.what_went_well}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-semibold text-green-700">💡 Can Improve</p>
+                                          <p className="text-xs text-green-900">{purchase.ai_summary.seller_analysis.what_to_improve}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  
+                                  <div>
+                                    <p className="font-semibold text-neutral-700 mb-1">Best Offer</p>
+                                    <p className="text-neutral-900">{purchase.ai_summary.highlights.best_offer}</p>
+                                  </div>
+                                  
+                                  <div>
+                                    <p className="font-semibold text-neutral-700 mb-1">Turning Points</p>
+                                    <ul className="space-y-1">
+                                      {purchase.ai_summary.highlights.turning_points.map((point, i) => (
+                                        <li key={i} className="flex items-start space-x-2">
+                                          <span className="text-primary-600">→</span>
+                                          <span className="text-neutral-900">{point}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                  
+                                  <div>
+                                    <p className="font-semibold text-neutral-700 mb-1">Tactics Used</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {purchase.ai_summary.highlights.tactics_used.map((tactic, i) => (
+                                        <span key={i} className="px-2 py-1 bg-white rounded text-xs text-neutral-700 border border-neutral-300">
+                                          {tactic}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <p className="text-neutral-600">Final Price</p>
-                            <p className="font-semibold text-neutral-900">
-                              {formatCurrency(purchase.final_price_per_unit)}/unit
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-neutral-600">Total Cost</p>
-                            <p className="font-semibold text-secondary-600">
-                              {formatCurrency(purchase.total_cost)}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-neutral-600">Negotiation</p>
-                            <p className="font-semibold text-neutral-900">
-                              {purchase.negotiation_rounds} rounds
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-neutral-600">Duration</p>
-                            <p className="font-semibold text-neutral-900">
-                              {formatDuration(purchase.duration_seconds)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </Card>

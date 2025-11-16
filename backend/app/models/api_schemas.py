@@ -160,6 +160,28 @@ class NegotiationStateResponse(BaseModel):
     buyer_constraints: BuyerConstraints
 
 
+class NegotiationHighlights(BaseModel):
+    """Negotiation highlights extracted by AI."""
+    best_offer: str
+    turning_points: List[str]
+    tactics_used: List[str]
+
+
+class PartyAnalysis(BaseModel):
+    """Analysis of what a party did well and what to improve."""
+    what_went_well: str
+    what_to_improve: str
+
+
+class ItemNegotiationSummary(BaseModel):
+    """AI-generated summary for a single negotiation."""
+    narrative: str
+    buyer_analysis: PartyAnalysis
+    seller_analysis: PartyAnalysis
+    highlights: NegotiationHighlights
+    deal_winner: str
+
+
 class PurchaseSummary(BaseModel):
     """Purchase summary."""
     item_name: str
@@ -169,6 +191,7 @@ class PurchaseSummary(BaseModel):
     total_cost: float
     negotiation_rounds: int
     duration_seconds: Optional[float] = None
+    ai_summary: Optional[ItemNegotiationSummary] = None
 
 
 class FailedItem(BaseModel):
@@ -191,6 +214,13 @@ class NegotiationMetrics(BaseModel):
     total_messages_exchanged: int
 
 
+class OverallAnalysis(BaseModel):
+    """Overall analysis of all negotiations in a session."""
+    performance_insights: str
+    cross_item_comparison: str
+    recommendations: List[str]
+
+
 class SessionSummaryResponse(BaseModel):
     """Session summary response."""
     session_id: str
@@ -202,4 +232,5 @@ class SessionSummaryResponse(BaseModel):
     failed_items: List[FailedItem]
     total_cost_summary: TotalCostSummary
     negotiation_metrics: NegotiationMetrics
+    overall_analysis: Optional[OverallAnalysis] = None
 

@@ -158,6 +158,25 @@ export interface DecisionResponse {
 }
 
 // Summary
+export interface NegotiationHighlights {
+  best_offer: string;
+  turning_points: string[];
+  tactics_used: string[];
+}
+
+export interface PartyAnalysis {
+  what_went_well: string;
+  what_to_improve: string;
+}
+
+export interface ItemNegotiationSummary {
+  narrative: string;
+  buyer_analysis: PartyAnalysis;
+  seller_analysis: PartyAnalysis;
+  highlights: NegotiationHighlights;
+  deal_winner: string;
+}
+
 export interface PurchaseSummary {
   item_name: string;
   quantity: number;
@@ -166,6 +185,7 @@ export interface PurchaseSummary {
   total_cost: number;
   negotiation_rounds: number;
   duration_seconds: number;
+  ai_summary?: ItemNegotiationSummary;
 }
 
 export interface FailedItem {
@@ -185,6 +205,12 @@ export interface NegotiationMetrics {
   total_messages_exchanged: number;
 }
 
+export interface OverallAnalysis {
+  performance_insights: string;
+  cross_item_comparison: string;
+  recommendations: string[];
+}
+
 export interface SessionSummary {
   session_id: string;
   buyer_name: string;
@@ -195,6 +221,7 @@ export interface SessionSummary {
   failed_items: FailedItem[];
   total_cost_summary: TotalCostSummary;
   negotiation_metrics: NegotiationMetrics;
+  overall_analysis?: OverallAnalysis;
 }
 
 // SSE Events - Matching API_DOCUMENTATION.md event types

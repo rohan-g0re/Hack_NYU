@@ -13,7 +13,7 @@ import asyncio
 import json
 from datetime import datetime
 
-from ....core.session_manager import active_rooms
+from ....core.session_manager import active_rooms, session_manager
 from ....core.config import settings
 from ....core.database import get_db
 from ....core.models import NegotiationRun
@@ -97,6 +97,9 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
                 except asyncio.CancelledError:
                     break
         
+        # Track decision data for saving to DB
+        decision_data = None
+        
         # Stream negotiation events
         async for event in graph.run(room_state):
             # Serialize event data
@@ -111,6 +114,11 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
             elif isinstance(event_data["timestamp"], datetime):
                 # Convert datetime objects to ISO strings
                 event_data["timestamp"] = event_data["timestamp"].isoformat()
+            
+            # Capture decision data when decision event is emitted
+            if event["type"] == "decision":
+                decision_data = event_data
+                logger.info(f"Captured decision data for room {room_id}: {decision_data.get('decision')}")
             
             yield {
                 "event": event["type"],
@@ -132,17 +140,48 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
             })
         }
 
-        # Persist completion to DB (status, rounds, ended_at)
+        # Persist completion to DB - create outcome record
         try:
-            with get_db() as db:
-                run = db.query(NegotiationRun).filter(NegotiationRun.id == room_id).first()
-                if run:
-                    run.status = "completed"
-                    run.current_round = getattr(room_state, "current_round", run.current_round)
-                    run.ended_at = datetime.now()
-                    db.commit()
+            if decision_data and decision_data.get("decision") == "accept":
+                # Buyer accepted an offer - save as deal
+                logger.info(f"Saving deal outcome for room {room_id}")
+                session_manager.finalize_run(
+                    run_id=room_id,
+                    decision_type="deal",
+                    selected_seller_id=decision_data.get("chosen_seller_id"),
+                    final_price_per_unit=decision_data.get("final_price"),
+                    quantity=decision_data.get("final_quantity"),
+                    decision_reason=decision_data.get("reason", "Negotiation completed successfully"),
+                    emit_event=False  # Events already emitted during streaming
+                )
+            elif decision_data and decision_data.get("decision") == "reject":
+                # Buyer rejected all offers
+                logger.info(f"Saving no_deal outcome for room {room_id}")
+                session_manager.finalize_run(
+                    run_id=room_id,
+                    decision_type="no_deal",
+                    decision_reason=decision_data.get("reason", "No suitable offers"),
+                    emit_event=False
+                )
+            else:
+                # No decision captured (max rounds or other completion) - mark as no_deal
+                logger.info(f"Negotiation ended without explicit decision for room {room_id}, marking as no_deal")
+                with get_db() as db:
+                    run = db.query(NegotiationRun).filter(NegotiationRun.id == room_id).first()
+                    if run:
+                        run.status = "completed"
+                        run.current_round = getattr(room_state, "current_round", run.current_round)
+                        run.ended_at = datetime.now()
+                        db.commit()
+                
+                session_manager.finalize_run(
+                    run_id=room_id,
+                    decision_type="no_deal",
+                    decision_reason="Negotiation ended without reaching agreement",
+                    emit_event=False
+                )
         except Exception as e:
-            logger.error(f"Failed to persist completion for room {room_id}: {e}")
+            logger.error(f"Failed to persist outcome for room {room_id}: {e}")
         
     except Exception as e:
         logger.error(f"Error in SSE stream for room {room_id}: {e}")
