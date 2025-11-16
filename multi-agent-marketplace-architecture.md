@@ -25,22 +25,24 @@
 ## 1. Executive Summary
 
 ### System Overview
-A FastAPI-based backend that orchestrates multi-agent negotiations between one buyer and up to 10 sellers using LangGraph. The system exposes RESTful endpoints for configuration and Server-Sent Events (SSE) for real-time streaming of negotiation conversations.
+A FastAPI-based backend that orchestrates opaque multi-agent negotiations between one buyer and up to 10 sellers using LangGraph. The buyer has NO knowledge of seller internal costs, strategies, or profiles - only sees what sellers choose to reveal in chat. All state is persisted in SQLite database to support multiple negotiation runs per configuration session.
 
 ### Key Capabilities for Frontend
-- **Configuration APIs:** Create buyer, sellers, and initialize marketplace
+- **Configuration APIs:** Create buyer, sellers, and initialize marketplace sessions
 - **Real-time Streaming:** SSE endpoints for live negotiation updates
 - **State Inspection:** Query current negotiation status, offers, and history
-- **Session Management:** Create, monitor, and retrieve completed sessions
-- **Flexible LLM Backend:** Switch between LM Studio and OpenRouter
+- **Session Management:** Create, monitor, and retrieve completed sessions with multiple negotiation runs
+- **LLM Backend:** LM Studio integration for on-device inference
+- **Database Persistence:** SQLite storage for all configurations and negotiation logs
 
 ### Technology Stack
 - **Framework:** FastAPI 0.104+
+- **Database:** SQLite 3 with SQLAlchemy ORM
 - **Orchestration:** LangGraph + LangChain
+- **LLM Provider:** LM Studio (local inference)
 - **Async:** asyncio, sse-starlette
 - **Validation:** Pydantic v2
 - **Streaming:** Server-Sent Events (SSE)
-- **Storage:** In-memory + JSON file persistence
 
 ---
 
@@ -68,9 +70,9 @@ multi-agent-marketplace/
 │   ├── core/                            # Core business logic
 │   │   ├── __init__.py
 │   │   ├── config.py                   # App configuration
-│   │   ├── state_manager.py            # In-memory state management
+│   │   ├── database.py                 # SQLite database connection
 │   │   ├── session_manager.py          # Session lifecycle
-│   │   └── persistence.py              # JSON log saving
+│   │   └── models.py                   # SQLAlchemy database models
 │   │
 │   ├── models/                          # Pydantic schemas
 │   │   ├── __init__.py
@@ -95,9 +97,7 @@ multi-agent-marketplace/
 │   │
 │   ├── llm/                             # LLM integration layer
 │   │   ├── __init__.py
-│   │   ├── provider.py                 # Abstract LLM provider
 │   │   ├── lm_studio.py                # LM Studio adapter
-│   │   ├── openrouter.py               # OpenRouter adapter
 │   │   └── streaming_handler.py        # Streaming utilities
 │   │
 │   ├── utils/                           # Utility functions
@@ -124,11 +124,10 @@ multi-agent-marketplace/
 │       ├── sample_configs.py
 │       └── mock_llm.py
 │
-├── logs/                                # Runtime logs & saved negotiations
-│   └── sessions/
-│       └── session_<id>/
-│           ├── negotiation_item1.json
-│           └── summary.json
+├── data/                                # Database and logs
+│   ├── marketplace.db                  # SQLite database
+│   └── logs/
+│       └── app.log
 │
 ├── .env.example                         # Environment variables template
 ├── .env                                 # Actual environment variables (gitignored)
@@ -173,18 +172,18 @@ POST /api/v1/simulation/initialize
       {
         "item_id": "item_001",
         "item_name": "Laptop",
-        "quantity_needed": 2
+        "quantity_needed": 2,
+        "min_price_per_unit": 900,
+        "max_price_per_unit": 1500
       },
       {
         "item_id": "item_002", 
         "item_name": "Mouse",
-        "quantity_needed": 5
+        "quantity_needed": 5,
+        "min_price_per_unit": 10,
+        "max_price_per_unit": 25
       }
-    ],
-    "budget_range": {
-      "min": 1000,
-      "max": 3000
-    }
+    ]
   },
   "sellers": [
     {
@@ -223,9 +222,7 @@ POST /api/v1/simulation/initialize
     }
   ],
   "llm_config": {
-    "provider": "lm_studio",
     "model": "llama-3-8b-instruct",
-    "api_key": null,
     "temperature": 0.7,
     "max_tokens": 500
   }
@@ -245,16 +242,18 @@ POST /api/v1/simulation/initialize
       "item_id": "item_001",
       "item_name": "Laptop",
       "quantity_needed": 2,
+      "buyer_constraints": {
+        "min_price_per_unit": 900,
+        "max_price_per_unit": 1500
+      },
       "participating_sellers": [
         {
           "seller_id": "seller_001",
-          "seller_name": "TechStore",
-          "initial_price": 1200
+          "seller_name": "TechStore"
         },
         {
           "seller_id": "seller_002",
-          "seller_name": "GadgetHub",
-          "initial_price": 1150
+          "seller_name": "GadgetHub"
         }
       ],
       "status": "pending"
@@ -295,8 +294,7 @@ GET /api/v1/simulation/{session_id}
   "created_at": "2025-11-15T10:30:00Z",
   "buyer": {
     "id": "buyer_123",
-    "name": "John Doe",
-    "total_budget": 3000
+    "name": "John Doe"
   },
   "sellers": [
     {"id": "seller_001", "name": "TechStore"},
@@ -546,10 +544,9 @@ GET /api/v1/negotiation/{room_id}/state
       "last_updated": "2025-11-15T10:32:05Z"
     }
   },
-  "buyer_budget": {
-    "min": 1000,
-    "max": 3000,
-    "remaining": 1920
+  "buyer_constraints": {
+    "min_price_per_unit": 900,
+    "max_price_per_unit": 1500
   }
 }
 ```
@@ -595,11 +592,10 @@ GET /api/v1/simulation/{session_id}/summary
       "reason": "No sellers available"
     }
   ],
-  "budget_summary": {
-    "initial_budget": 3000,
+  "total_cost_summary": {
     "total_spent": 2160,
-    "remaining": 840,
-    "utilization_percentage": 72
+    "items_purchased": 1,
+    "average_savings_per_item": 420
   },
   "negotiation_metrics": {
     "average_rounds": 5,
@@ -636,9 +632,12 @@ GET /api/v1/health
   "status": "healthy",
   "timestamp": "2025-11-15T10:30:00Z",
   "version": "1.0.0",
-  "llm_providers": {
-    "lm_studio": "available",
-    "openrouter": "configured"
+  "database": {
+    "status": "connected",
+    "url": "sqlite:///data/marketplace.db"
+  },
+  "llm_provider": {
+    "lm_studio": "available"
   }
 }
 ```
@@ -660,18 +659,203 @@ GET /api/v1/llm/status
     "base_url": "http://localhost:1234/v1",
     "models": ["llama-3-8b-instruct", "mistral-7b"]
   },
-  "openrouter": {
-    "available": true,
-    "api_key_configured": true
+  "database": {
+    "connected": true,
+    "total_sessions": 15,
+    "total_negotiations": 47
   }
 }
 ```
 
 ---
 
-## 4. Request/Response Schemas
+## 4. SQLite Database Schema
 
-### 4.1 Core Data Models (Pydantic)
+### 4.1 Database Design Principles
+
+**Key Design Decisions:**
+- **Per-item pricing constraints:** No global budget, only min/max per item
+- **Opaque seller information:** Buyer cannot access seller costs, least prices, or profiles
+- **Session-based configurations:** Support multiple negotiation runs per session
+- **Complete conversation logs:** All messages stored for replay and analysis
+
+### 4.2 Database Tables
+
+#### Sessions Table
+```sql
+CREATE TABLE sessions (
+    id UUID PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) CHECK (status IN ('draft', 'active', 'completed')) DEFAULT 'draft',
+    llm_model VARCHAR(100) NOT NULL,
+    llm_temperature REAL DEFAULT 0.7,
+    llm_max_tokens INTEGER DEFAULT 500
+);
+```
+
+#### Buyers Table
+```sql
+CREATE TABLE buyers (
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Buyer Items Table (Shopping List)
+```sql
+CREATE TABLE buyer_items (
+    id UUID PRIMARY KEY,
+    buyer_id UUID NOT NULL REFERENCES buyers(id) ON DELETE CASCADE,
+    item_id VARCHAR(50) NOT NULL,
+    item_name VARCHAR(100) NOT NULL,
+    quantity_needed INTEGER NOT NULL CHECK (quantity_needed > 0),
+    min_price_per_unit REAL NOT NULL CHECK (min_price_per_unit >= 0),
+    max_price_per_unit REAL NOT NULL CHECK (max_price_per_unit > min_price_per_unit),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Sellers Table
+```sql
+CREATE TABLE sellers (
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    priority VARCHAR(20) CHECK (priority IN ('customer_retention', 'maximize_profit')) NOT NULL,
+    speaking_style VARCHAR(20) CHECK (speaking_style IN ('rude', 'very_sweet')) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Seller Inventory Table
+```sql
+CREATE TABLE seller_inventory (
+    id UUID PRIMARY KEY,
+    seller_id UUID NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+    item_id VARCHAR(50) NOT NULL,
+    item_name VARCHAR(100) NOT NULL,
+    cost_price REAL NOT NULL CHECK (cost_price >= 0),
+    selling_price REAL NOT NULL CHECK (selling_price > cost_price),
+    least_price REAL NOT NULL CHECK (least_price > cost_price AND least_price < selling_price),
+    quantity_available INTEGER NOT NULL CHECK (quantity_available >= 0),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(seller_id, item_id)
+);
+```
+
+#### Negotiation Runs Table
+```sql
+CREATE TABLE negotiation_runs (
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    buyer_item_id UUID NOT NULL REFERENCES buyer_items(id) ON DELETE CASCADE,
+    status VARCHAR(20) CHECK (status IN ('pending', 'active', 'completed', 'no_sellers_available', 'aborted')) DEFAULT 'pending',
+    started_at TIMESTAMP,
+    ended_at TIMESTAMP,
+    current_round INTEGER DEFAULT 0,
+    max_rounds INTEGER DEFAULT 10,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Negotiation Participants Table
+```sql
+CREATE TABLE negotiation_participants (
+    id UUID PRIMARY KEY,
+    negotiation_run_id UUID NOT NULL REFERENCES negotiation_runs(id) ON DELETE CASCADE,
+    seller_id UUID NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(negotiation_run_id, seller_id)
+);
+```
+
+#### Messages Table
+```sql
+CREATE TABLE messages (
+    id UUID PRIMARY KEY,
+    negotiation_run_id UUID NOT NULL REFERENCES negotiation_runs(id) ON DELETE CASCADE,
+    turn_number INTEGER NOT NULL,
+    sender_type VARCHAR(10) CHECK (sender_type IN ('buyer', 'seller')) NOT NULL,
+    sender_id UUID NOT NULL, -- References buyers.id or sellers.id
+    sender_name VARCHAR(100) NOT NULL,
+    message_text TEXT NOT NULL,
+    mentioned_agents TEXT, -- JSON array of mentioned seller IDs
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Offers Table
+```sql
+CREATE TABLE offers (
+    id UUID PRIMARY KEY,
+    message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    seller_id UUID NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+    price_per_unit REAL NOT NULL CHECK (price_per_unit > 0),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    conditions TEXT, -- Optional conditions or terms
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### Negotiation Outcomes Table
+```sql
+CREATE TABLE negotiation_outcomes (
+    id UUID PRIMARY KEY,
+    negotiation_run_id UUID NOT NULL REFERENCES negotiation_runs(id) ON DELETE CASCADE,
+    decision_type VARCHAR(20) CHECK (decision_type IN ('deal', 'no_deal')) NOT NULL,
+    selected_seller_id UUID REFERENCES sellers(id),
+    final_price_per_unit REAL,
+    quantity INTEGER,
+    total_cost REAL,
+    decision_reason TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 4.3 Database Indexes
+
+```sql
+-- Performance indexes
+CREATE INDEX idx_sessions_status ON sessions(status);
+CREATE INDEX idx_buyers_session ON buyers(session_id);
+CREATE INDEX idx_buyer_items_buyer ON buyer_items(buyer_id);
+CREATE INDEX idx_sellers_session ON sellers(session_id);
+CREATE INDEX idx_seller_inventory_seller ON seller_inventory(seller_id);
+CREATE INDEX idx_seller_inventory_item ON seller_inventory(item_id);
+CREATE INDEX idx_negotiation_runs_session ON negotiation_runs(session_id);
+CREATE INDEX idx_negotiation_runs_status ON negotiation_runs(status);
+CREATE INDEX idx_messages_negotiation ON messages(negotiation_run_id);
+CREATE INDEX idx_messages_turn ON messages(negotiation_run_id, turn_number);
+CREATE INDEX idx_offers_message ON offers(message_id);
+CREATE INDEX idx_offers_seller ON offers(seller_id);
+CREATE INDEX idx_outcomes_negotiation ON negotiation_outcomes(negotiation_run_id);
+```
+
+### 4.4 Key Constraints & Rules
+
+**Opaque Information Model:**
+- Buyer queries CANNOT join directly to seller_inventory cost/least_price fields
+- API endpoints must filter seller internal data before returning to frontend
+- Only sellers see their own cost_price, selling_price, least_price
+
+**Per-Item Pricing:**
+- No global budget table - constraints are per buyer_items row
+- min_price_per_unit < max_price_per_unit enforced at DB level
+- Final deals must be within [min_price_per_unit, max_price_per_unit] range
+
+**Session Lifecycle:**
+- One session can have multiple negotiation_runs for same or different items
+- Seller inventory quantities can be decremented after successful deals
+- All negotiation history preserved even after session completion
+
+---
+
+## 5. Request/Response Schemas
+
+### 5.1 Core Data Models (Pydantic)
 
 #### Agent Configuration Models
 
@@ -680,16 +864,13 @@ GET /api/v1/llm/status
 BuyerConfig:
   - name: str
   - shopping_list: List[ShoppingItem]
-  - budget_range: BudgetRange
 
 ShoppingItem:
   - item_id: str
   - item_name: str
   - quantity_needed: int (>= 1)
-
-BudgetRange:
-  - min: float (>= 0)
-  - max: float (> min)
+  - min_price_per_unit: float (>= 0)
+  - max_price_per_unit: float (> min_price_per_unit)
 
 # Seller Configuration
 SellerConfig:
@@ -711,9 +892,7 @@ SellerProfile:
 
 # LLM Configuration
 LLMConfig:
-  - provider: Enum["lm_studio", "openrouter"]
   - model: str
-  - api_key: Optional[str]  # Required for openrouter
   - temperature: float (0.0 - 1.0, default: 0.7)
   - max_tokens: int (default: 500)
 ```
@@ -792,9 +971,14 @@ NegotiationRoomInfo:
   - item_id: str
   - item_name: str
   - quantity_needed: int
+  - buyer_constraints: BuyerConstraints
   - participating_sellers: List[SellerParticipant]
   - status: str
   - reason: Optional[str]
+
+BuyerConstraints:
+  - min_price_per_unit: float
+  - max_price_per_unit: float
 
 # Send Message Request
 SendMessageRequest:
@@ -816,12 +1000,7 @@ NegotiationStateResponse:
   - max_rounds: int
   - conversation_history: List[Message]
   - current_offers: Dict[str, Offer]
-  - buyer_budget: BudgetInfo
-
-BudgetInfo:
-  - min: float
-  - max: float
-  - remaining: float
+  - buyer_constraints: BuyerConstraints
 
 # Summary Response
 SessionSummaryResponse:
@@ -860,7 +1039,7 @@ NegotiationMetrics:
   - total_messages_exchanged: int
 ```
 
-### 4.2 Validation Rules
+### 5.2 Validation Rules
 
 **Enforced by Pydantic Validators:**
 
@@ -869,9 +1048,9 @@ NegotiationMetrics:
    - `selling_price > cost_price`
    - `cost_price < least_price < selling_price`
 
-2. **Budget Constraints:**
-   - `budget_range.min >= 0`
-   - `budget_range.max > budget_range.min`
+2. **Per-Item Price Constraints:**
+   - `min_price_per_unit >= 0`
+   - `max_price_per_unit > min_price_per_unit`
 
 3. **Quantity Constraints:**
    - `quantity_needed >= 1`
@@ -888,13 +1067,16 @@ NegotiationMetrics:
 6. **Enum Validation:**
    - Priority: Only "customer_retention" or "maximize_profit"
    - Speaking Style: Only "rude" or "very_sweet"
-   - LLM Provider: Only "lm_studio" or "openrouter"
+
+7. **Opaque Information Model:**
+   - Buyer requests MUST NOT include seller cost/least price data
+   - Seller internal profiles hidden from buyer-visible responses
 
 ---
 
-## 5. WebSocket & SSE Architecture
+## 6. WebSocket & SSE Architecture
 
-### 5.1 Why SSE (Server-Sent Events)?
+### 6.1 Why SSE (Server-Sent Events)?
 
 **Chosen over WebSockets because:**
 - Unidirectional (server → client) is sufficient
@@ -903,7 +1085,7 @@ NegotiationMetrics:
 - Works over HTTP/HTTPS (no protocol upgrade needed)
 - Built-in event typing
 
-### 5.2 SSE Event Flow
+### 6.2 SSE Event Flow
 
 ```
 Frontend                     Backend (FastAPI)                LangGraph
@@ -933,7 +1115,7 @@ Frontend                     Backend (FastAPI)                LangGraph
    |-- Close Connection ------->  |                                |
 ```
 
-### 5.3 SSE Connection Management
+### 6.3 SSE Connection Management
 
 **Connection Lifecycle:**
 
@@ -988,7 +1170,7 @@ async def negotiation_stream(room_id: str):
         }
 ```
 
-### 5.4 Frontend SSE Handling Best Practices
+### 6.4 Frontend SSE Handling Best Practices
 
 **Recommended Frontend Implementation:**
 
@@ -1071,9 +1253,9 @@ class NegotiationStream {
 
 ---
 
-## 6. Frontend Integration Guide
+## 7. Frontend Integration Guide
 
-### 6.1 Complete Workflow from Frontend Perspective
+### 7.1 Complete Workflow from Frontend Perspective
 
 #### **Phase 1: Configuration**
 
@@ -1267,7 +1449,7 @@ function displaySummary(summary) {
 
 ---
 
-### 6.2 UI/UX Recommendations
+### 7.2 UI/UX Recommendations
 
 #### **Configuration Screen**
 
@@ -1398,7 +1580,7 @@ function displaySummary(summary) {
 
 ---
 
-### 6.3 State Management (Frontend)
+### 7.3 State Management (Frontend)
 
 **Recommended Frontend State Structure:**
 
@@ -1439,9 +1621,9 @@ const appState = {
 
 ---
 
-## 7. State Management Flow
+## 8. State Management Flow
 
-### 7.1 Backend State Lifecycle
+### 8.1 Backend State Lifecycle
 
 ```
 [User Submits Config]
@@ -1472,7 +1654,7 @@ const appState = {
 [Return session_id + room_ids to frontend]
 ```
 
-### 7.2 Negotiation State Updates
+### 8.2 Negotiation State Updates
 
 ```
 [Frontend calls /start on room_id]
@@ -1498,7 +1680,7 @@ const appState = {
 [Cleanup on session delete or timeout]
 ```
 
-### 7.3 State Cleanup Strategy
+### 8.3 State Cleanup Strategy
 
 **In-Memory Retention:**
 - Active sessions: Indefinite (until completed or user deletes)
@@ -1513,9 +1695,9 @@ const appState = {
 
 ---
 
-## 8. Error Handling & Status Codes
+## 9. Error Handling & Status Codes
 
-### 8.1 HTTP Status Codes
+### 9.1 HTTP Status Codes
 
 | Code | Meaning | When Used |
 |------|---------|-----------|
@@ -1529,7 +1711,7 @@ const appState = {
 | 500 | Internal Server Error | LLM failure, unexpected error |
 | 503 | Service Unavailable | LLM provider unreachable |
 
-### 8.2 Error Response Format
+### 9.2 Error Response Format
 
 **Standard Error Schema:**
 ```json
@@ -1548,7 +1730,7 @@ const appState = {
 }
 ```
 
-### 8.3 Error Codes Catalog
+### 9.3 Error Codes Catalog
 
 | Error Code | HTTP Status | Meaning | Frontend Action |
 |------------|-------------|---------|-----------------|
@@ -1563,7 +1745,7 @@ const appState = {
 | `BUDGET_CONSTRAINT_VIOLATION` | 422 | Purchase exceeds budget | Show budget error |
 | `INSUFFICIENT_INVENTORY` | 422 | Seller out of stock | Show availability error |
 
-### 8.4 Frontend Error Handling Strategy
+### 9.4 Frontend Error Handling Strategy
 
 ```javascript
 async function apiCall(url, options) {
@@ -1612,9 +1794,9 @@ function handleAPIError(error) {
 
 ---
 
-## 9. Environment Configuration
+## 10. Environment Configuration
 
-### 9.1 Environment Variables
+### 10.1 Environment Variables
 
 **File: `.env`**
 
@@ -1634,15 +1816,14 @@ WORKERS=1  # For development, increase for production
 CORS_ORIGINS="http://localhost:3000,http://localhost:5173"  # Frontend URLs
 CORS_ALLOW_CREDENTIALS=true
 
+# Database
+DATABASE_URL="sqlite:///data/marketplace.db"
+DATABASE_ECHO=false  # Set to true for SQL logging in development
+
 # LM Studio
 LM_STUDIO_BASE_URL="http://localhost:1234/v1"
 LM_STUDIO_DEFAULT_MODEL="llama-3-8b-instruct"
 LM_STUDIO_TIMEOUT=30  # seconds
-
-# OpenRouter
-OPENROUTER_API_KEY="your_api_key_here"
-OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
-OPENROUTER_DEFAULT_MODEL="meta-llama/llama-3-70b-instruct"
 
 # LLM Settings
 LLM_DEFAULT_TEMPERATURE=0.7
@@ -1675,7 +1856,7 @@ RATE_LIMIT_ENABLED=false
 RATE_LIMIT_PER_MINUTE=60
 ```
 
-### 9.2 Configuration Loading
+### 10.2 Configuration Loading
 
 **File: `app/core/config.py`**
 
@@ -1699,15 +1880,14 @@ class Settings(BaseSettings):
     cors_origins: List[str]
     cors_allow_credentials: bool
     
+    # Database
+    database_url: str
+    database_echo: bool
+    
     # LM Studio
     lm_studio_base_url: str
     lm_studio_default_model: str
     lm_studio_timeout: int
-    
-    # OpenRouter
-    openrouter_api_key: str
-    openrouter_base_url: str
-    openrouter_default_model: str
     
     # ... other settings
     
@@ -1720,7 +1900,7 @@ settings = Settings()
 
 ---
 
-## 10. Implementation Checklist
+## 11. Implementation Checklist
 
 ### Phase 1: Foundation (Days 1-2)
 
@@ -1841,9 +2021,9 @@ settings = Settings()
 
 ---
 
-## 11. FastAPI Application Structure
+## 12. FastAPI Application Structure
 
-### 11.1 Main Application File
+### 12.1 Main Application File
 
 **File: `app/main.py`**
 
@@ -1906,7 +2086,7 @@ async def shutdown_event():
     pass
 ```
 
-### 11.2 Router Aggregation
+### 12.2 Router Aggregation
 
 **File: `app/api/v1/router.py`**
 
@@ -1939,7 +2119,7 @@ api_router.include_router(
 )
 ```
 
-### 11.3 Endpoint File Structure
+### 12.3 Endpoint File Structure
 
 **Each endpoint file (e.g., `simulation.py`) contains:**
 - Router definition
@@ -1991,9 +2171,9 @@ async def initialize_session(request: InitializeSessionRequest):
 
 ---
 
-## 12. Deployment Considerations
+## 13. Deployment Considerations
 
-### 12.1 Development Deployment
+### 13.1 Development Deployment
 
 **Run FastAPI:**
 ```bash
@@ -2005,7 +2185,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Load model (e.g., llama-3-8b-instruct)
 - Enable local server on port 1234
 
-### 12.2 Production Deployment (Optional)
+### 13.2 Production Deployment (Optional)
 
 **Using Docker Compose:**
 
@@ -2046,9 +2226,9 @@ gunicorn app.main:app \
 
 ---
 
-## 13. Testing Strategy for Frontend Developers
+## 14. Testing Strategy for Frontend Developers
 
-### 13.1 API Testing Tools
+### 14.1 API Testing Tools
 
 **Postman Collection:**
 - Pre-built requests for all endpoints
@@ -2062,7 +2242,7 @@ gunicorn app.main:app \
 - Schema validation
 - Try-it-out functionality
 
-### 13.2 Mock Data Fixtures
+### 14.2 Mock Data Fixtures
 
 **Provide pre-configured test data:**
 
@@ -2071,10 +2251,21 @@ gunicorn app.main:app \
 const mockBuyer = {
   name: "Test Buyer",
   shopping_list: [
-    { item_id: "laptop_001", item_name: "Laptop", quantity_needed: 2 },
-    { item_id: "mouse_001", item_name: "Mouse", quantity_needed: 5 }
-  ],
-  budget_range: { min: 1000, max: 3000 }
+    { 
+      item_id: "laptop_001", 
+      item_name: "Laptop", 
+      quantity_needed: 2,
+      min_price_per_unit: 900,
+      max_price_per_unit: 1500
+    },
+    { 
+      item_id: "mouse_001", 
+      item_name: "Mouse", 
+      quantity_needed: 5,
+      min_price_per_unit: 10,
+      max_price_per_unit: 25
+    }
+  ]
 };
 
 // Example sellers
@@ -2101,14 +2292,13 @@ const mockSellers = [
 
 // Example LLM config
 const mockLLMConfig = {
-  provider: "lm_studio",
   model: "llama-3-8b-instruct",
   temperature: 0.7,
   max_tokens: 500
 };
 ```
 
-### 13.3 End-to-End Test Scenario
+### 14.3 End-to-End Test Scenario
 
 **Test Script for Frontend Developers:**
 
@@ -2152,9 +2342,9 @@ setTimeout(async () => {
 
 ---
 
-## 14. Security & Best Practices
+## 15. Security & Best Practices
 
-### 14.1 Input Sanitization
+### 15.1 Input Sanitization
 
 **Enforce at multiple levels:**
 1. Pydantic model validation (types, ranges)
@@ -2162,7 +2352,7 @@ setTimeout(async () => {
 3. SQL injection prevention (if database added)
 4. XSS prevention in message content
 
-### 14.2 Rate Limiting (Optional)
+### 15.2 Rate Limiting (Optional)
 
 **Protect against abuse:**
 ```python
@@ -2177,15 +2367,15 @@ async def initialize_session(...):
     ...
 ```
 
-### 14.3 API Key Security
+### 15.3 Database Security
 
-**For OpenRouter:**
-- Store in environment variables, never in code
-- Validate on startup
-- Use separate keys for dev/prod
-- Rotate keys periodically
+**For SQLite Database:**
+- Restrict file system permissions on database file
+- Use database-level constraints to enforce data integrity
+- Regularly backup database file
+- Consider write-ahead logging (WAL) mode for better concurrency
 
-### 14.4 CORS Configuration
+### 15.4 CORS Configuration
 
 **Production settings:**
 ```python
@@ -2197,7 +2387,7 @@ CORS_ORIGINS = [
 
 ---
 
-## 15. Troubleshooting Guide
+## 16. Troubleshooting Guide
 
 ### Common Issues & Solutions
 
@@ -2212,7 +2402,7 @@ CORS_ORIGINS = [
 
 ---
 
-## 16. Future Enhancements (Post-Hackathon)
+## 17. Future Enhancements (Post-Hackathon)
 
 **Potential additions:**
 - [ ] Multi-buyer support (competitive bidding)
@@ -2228,13 +2418,16 @@ CORS_ORIGINS = [
 
 ---
 
-## 17. Conclusion
+## 18. Conclusion
 
-This backend architecture provides a complete, production-ready foundation for the multi-agent ecommerce marketplace. The FastAPI endpoints are designed with frontend integration as a priority, offering:
+This backend architecture provides a complete, production-ready foundation for the multi-agent ecommerce marketplace with **opaque negotiations**. The FastAPI endpoints are designed with frontend integration as a priority, offering:
 
-✅ **Clear contracts:** Well-defined request/response schemas  
+✅ **Opaque Agent Model:** Buyers cannot see seller costs, strategies, or internal profiles  
+✅ **SQLite Persistence:** All configurations and negotiations stored in database  
+✅ **Per-Item Pricing:** No global budget - only min/max constraints per item  
 ✅ **Real-time updates:** SSE streaming for live negotiations  
-✅ **Flexible LLM support:** Swap between local and cloud inference  
+✅ **LM Studio Integration:** Focus on local inference for on-device simulation  
+✅ **Session-based Workflow:** Support multiple negotiation runs per configuration  
 ✅ **Comprehensive error handling:** Actionable error messages  
 ✅ **Scalable structure:** Modular design for easy extension  
 

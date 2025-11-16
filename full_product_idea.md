@@ -1,562 +1,761 @@
-## 1. Product Overview
 
-**Working name:** Multi-Agent Marketplace Simulator (MAMS)
-**Core idea:**
-Simulate a 1-Buyer vs N-Sellers ecommerce marketplace where:
 
-* A **single buyer agent** negotiates for each item in their cart
-* With up to **10 seller agents** who each have their own inventory, pricing constraints, and “personality”
-* Negotiations happen in a **WhatsApp-style multi-agent chat** per item
-* Sellers **only see buyer messages explicitly directed to them** (via `@seller_name`) and never see other sellers’ private conversations
-* The **buyer sees everything** and makes the final purchase decision per item.
+## 1. Product Overview (Updated)
 
-The system is built for a **hackathon setting**:
+**Name:** Multi-Agent Marketplace Simulator (MAMS)
 
-* Single device, no distributed infra
-* In-memory state
-* Two model backends: **local (LM Studio/Ollama)** and **remote (OpenRouter)**
-* Streaming LLM responses for “live chat” feel.
+**Core Idea (Revised):**
+Simulate **realistic, opaque negotiations** between:
 
-No code or backend details here – this is purely the **product / architecture concept**.
+* One **Buyer agent**, and
+* Up to **N Seller agents** (max ~10 per session),
 
----
+for multiple items, where:
 
-## 2. Goals & Non-Goals
+* Buyer **does not know**:
 
-### 2.1 Goals
+  * Seller cost price
+  * Seller least acceptable price
+  * Seller strategy/profile or priorities
+* Buyer only sees what sellers choose to reveal in chat.
+* Sellers negotiate using their own internal constraints and style, but those are **never exposed** to the buyer unless disclosed.
+* **No explicit scoring functions or numeric decision heuristics** in the product design — decisions are left to the LLM’s reasoning within prompts.
+* All state (config, negotiations, messages, outcomes) is persisted in a **database**, so:
 
-* Simulate **realistic marketplace dynamics** between one buyer and multiple independent sellers.
-* Allow **multi-agent negotiation** for each item in the buyer’s cart.
-* Reflect **asymmetric information**:
-
-  * Buyer knows each seller’s constraints and profile.
-  * Sellers only know the buyer’s profile and their own situation, not competitors’.
-* Support **dynamic negotiation strategies** inferred by LLMs, not hardcoded rules.
-* Make it trivial to:
-
-  * Configure sellers & buyer via a form
-  * Run one or multiple simulation runs
-  * Inspect **conversation logs + final purchase decisions**.
-
-### 2.2 Non-Goals
-
-* No real payments, logistics, or actual ecommerce integration.
-* No large-scale distributed system; only **single-machine** simulation.
-* No complex persistent analytics warehouse; just **basic logging** for now.
-* No hardcoded “game theory optimal” strategies; LLMs are allowed to improvise inside soft constraints.
+  * You can configure once per session,
+  * Then run **multiple negotiations** on top of that configuration.
 
 ---
 
-## 3. Core Entities & Concepts
+## 2. Updated Design Principles
+
+1. **Opaque Opponent Models**
+
+   * Buyer treats sellers as black boxes with only conversational evidence.
+   * Seller’s intrinsic attributes (costs, least_price, style, priorities) are internal.
+
+2. **Per-Item View for Buyer**
+
+   * Buyer only has **per-item constraints**:
+
+     * Min acceptable price for that item
+     * Max acceptable price for that item
+     * Required quantity
+   * There is **no global cross-item budget optimization**.
+
+3. **LLM-Driven Reasoning (No Handcrafted Scoring)**
+
+   * No designed numerical scoring like “price_score + behavior_score”.
+   * Buyer’s decision is purely described as “Let LLM think and justify” using instructions in prompts.
+
+4. **DB-Backed State**
+
+   * All configuration and negotiation logs stored in a DB.
+   * One configuration session can spawn multiple negotiations over time without re-entering configs.
+
+5. **Single Backend: LM Studio**
+
+   * All agents (Buyer and Sellers) use LM Studio–hosted models.
+   * Focus is on **on-device**, single-machine simulation.
+
+---
+
+## 3. Core Entities (Revised)
 
 ### 3.1 Buyer Agent
 
-**Buyer profile (inputs from user):**
+**Configuration Inputs (per session):**
 
-* **Item demand map:**
-  `item_name → quantity`
-  Example: `{ "iPhone Case": 2, "USB-C Cable": 3 }`
-* **Budget range:**
+* **Item demand list** (same as before):
+  `[(item_name, quantity, min_price, max_price)]`
+  e.g.
 
-  * `min_budget`
-  * `max_budget`
-* **Preference knobs (conceptual):**
+  * `"iPhone Case", qty=2, min_price=10, max_price=18`
+  * `"USB-C Cable", qty=3, min_price=5, max_price=9`
 
-  * Price sensitivity vs quality sensitivity
-  * Tolerance for rude vs sweet tone (could influence seller preference)
-  * Appetite for negotiation length (short vs detailed bargaining)
+> These min/max prices are the **only numeric constraints** the buyer has regarding money.
 
-**Buyer capabilities:**
-
-* For each item:
-
-  * Initiate a **multi-seller chat** for that item.
-  * Address sellers individually with `@seller_name` mentions.
-  * Ask for offers, discounts, bundles, guarantees, etc.
-* Compare seller responses using:
-
-  * Offered price vs budget
-  * Seller’s tone/behavior
-  * Past history (if we simulate multiple runs)
-* Decide:
-
-  * Which seller (if any) to buy from for that item
-  * At what price
-  * Or to **drop** the item if budget is too tight / offers are bad.
-
-Buyer agent has **global knowledge**:
-
-* Knows each seller’s:
-
-  * Cost price
-  * Current selling price
-  * Least acceptable price
-  * Stated priorities (customer retention vs profit)
-  * Speaking style configuration
-
-But **does not reveal this directly** unless we want to test certain scenarios. This becomes its internal reasoning context.
-
-### 3.2 Seller Agents
-
-Each seller is configured via a form and has:
-
-**Inventory:**
-
-* `items = [item1, item2, ..., itemX]`
-* For each item:
-
-  * `cost_price`
-  * `selling_price` (initial listed price)
-  * `least_price` (price floor)
-
-    * Always strictly greater than `cost_price`
-    * Seller must **not go below** this during negotiation
-
-**Profile:**
-
-* **Priority trade-off:**
-
-  * `customer_retention_weight`
-  * `profit_maximization_weight`
-    Conceptually: a soft preference that guides how much they are willing to sacrifice margin to retain the buyer.
-* **Speaking style range:**
-
-  * Can be configured between **“rude” ↔ “very sweet”**
-  * This is not fixed; the agent can modulate tone dynamically based on the conversation but biased by configuration.
-
-**Seller knowledge:**
+**Buyer knowledge:**
 
 * Knows:
 
-  * Their own costs, floor price, and inventory
-  * Buyer’s declared needs and budget range for the overall cart / that item
+  * Item name and quantity.
+  * Per-item min and max price constraints.
+  * Which sellers are *available* for that item (as identities/handles only, e.g. `@seller_A`, `@seller_B`).
 * Does **not** know:
 
-  * Other sellers’ prices, costs, or existence (beyond “you might have competitors” as a generic fact)
-  * Messages that buyer sends to other sellers.
+  * Seller cost price.
+  * Seller least_price (bottom line).
+  * Seller internal strategies, priorities, or speaking style configuration.
+  * Seller’s negotiation history across past runs.
 
-**Seller behavior (conceptual):**
+**Buyer behavior (conceptual):**
 
-* When `@mentioned` by the buyer:
+* For each item negotiation:
 
-  * Looks at current item, buyer’s requests, and their own constraints.
-  * Proposes or updates:
+  * Opens a “room” with all sellers who can supply that item.
+  * Asks initial questions (price, terms, quality, etc.).
+  * Uses **LLM reasoning** to:
 
-    * A price offer (maybe with discount steps but never below `least_price`)
-    * Non-price terms (delivery claims, support claims, “loyalty” offers)
-  * May adjust tone (sweet/rude) and concessions based on:
+    * Interpret seller responses.
+    * Decide who seems better.
+    * Decide if an offer is acceptable within `[min_price, max_price]`.
+    * Decide when to keep pushing vs settle vs walk away.
+* No explicit scoring, just instructions like:
 
-    * How close buyer’s ask is to `least_price`
-    * How many times buyer pushed
-    * Priority: retention vs profit.
-
----
-
-## 4. Simulation Structure
-
-### 4.1 Overall Simulation Session
-
-A **simulation run** is:
-
-1. User fills a configuration form:
-
-   * Buyer demand & budget
-   * Seller list (up to 10), inventory & pricing data, style, and priorities
-   * Choice of **LLM backend** preferences:
-
-     * Local (LM Studio / Ollama)
-     * Remote (OpenRouter)
-     * Possibly: which agents use which backend
-
-2. System prepares:
-
-   * In-memory **marketplace state**
-   * Buyer and seller **agent contexts** (prompts + parameters)
-   * A list of items to process from buyer’s cart.
-
-3. For each item:
-
-   * Create an **item-specific multi-agent chat room**:
-
-     * Participants: Buyer + all sellers who stock that item.
-   * Run a negotiation episode (multi-turn chat) until:
-
-     * Buyer decides on a seller or
-     * Buyer abandons the item / hits a stopping condition.
-
-4. After all items:
-
-   * Produce a **simulation report**:
-
-     * Which seller won which item at what price
-     * Items not purchased and why (budget exceeded, no acceptable offers, etc.)
-     * Conversation logs per item.
-
-### 4.2 Episodic vs Continuous
-
-* **Chosen model:** **Episodic per item**
-  Each item’s negotiation is a **self-contained episode**:
-
-  * Has a start (buyer initiates chat)
-  * Middle (multi-turn negotiations)
-  * End (buyer decision)
-* The larger simulation run is a sequence of these episodes, one per item (possibly with internal loops/iterations inside each episode).
+  * “Think about the offers and pick the seller whose offer and behavior most align with your constraints and preferences on this item.”
 
 ---
 
-## 5. Communication & Visibility Model
+### 3.2 Seller Agents
 
-### 5.1 Chat Metaphor
+**Configuration (per session, stored in DB):**
 
-Each item negotiation is conceptually like a **WhatsApp group**:
+Each seller has:
 
-* **Participants:**
+* **Seller identity:**
 
-  * `Buyer`
-  * `Seller_A`, `Seller_B`, ..., `Seller_N` (only those carrying that item)
+  * `seller_id`, `name/handle` (e.g. `"seller_1"`, `"@AlphaStore"`)
 
-* **Rules:**
+* **Inventory entries** (per item):
 
-  * Buyer can send:
+  * `item_name`
+  * `cost_price`
+  * `selling_price` (initial ask)
+  * `least_price` (price floor, strictly > cost_price)
 
-    * Public messages
-    * Seller-specific messages with `@seller_name`
-  * **Only seller-specific messages are visible to that seller**.
-    For simulation: each seller agent receives **only** the subset of messages from the buyer where they are mentioned.
-  * Sellers respond only when:
+* **Soft internal profile (not exposed to buyer):**
 
-    * They are explicitly @mentioned
-    * Or when we allow “initiative” (e.g., they respond after each buyer broadcast that’s visible to them).
+  * Priority balance:
 
-### 5.2 Decentralized Communication
+    * `customer_retention_weight`
+    * `profit_maximization_weight`
+  * Speaking style preference:
 
-* **Conceptual stance:**
+    * Rude ↔ Neutral ↔ Very Sweet
 
-  * There is **no “god” agent** making the decisions.
-  * Buyer and each seller act based on **local views**:
+**Seller knowledge:**
 
-    * Buyer has a global view of all seller states (hidden knowledge).
-    * Sellers only see what is logically available to them.
-* Under the hood, there is still an orchestrator (LangGraph-style) passing messages, but **logically**:
+* Knows (for each item negotiation run):
 
-  * Each agent is an independent entity with own state and policy.
-  * Communication is message-based, not direct function calls like “decide price”.
+  * Buyer’s stated demand for that item (item name and quantity).
+  * Whatever the buyer messages during **this** negotiation.
+  * Their own cost, selling_price, least_price, and stylistic profile.
+* Does **not**:
 
-### 5.3 Knowledge Partitioning
+  * Persist negotiation history beyond the current negotiation session.
+  * Remember past runs with the same buyer — every negotiation is fresh from seller’s perspective.
+  * See other sellers’ conversations or offers.
 
-* **Public knowledge**:
+**Key change:**
 
-  * Item name, requested quantity
-  * Buyer’s high-level budget range (if we choose to share)
-  * Generic info like “market is competitive”
-* **Buyer-private knowledge**:
-
-  * Sellers’ cost and least_price
-  * Sellers’ internal priorities and style knobs
-* **Seller-private knowledge**:
-
-  * Their own cost structure & internal willingness to negotiate
-  * Their own negotiation history with buyer (for that item and past runs)
+> Sellers **do not carry persistent “negotiation history”** across runs — they are stateless between negotiations except for their inventory and intrinsic parameters stored in DB.
 
 ---
 
-## 6. Agent Decision Logic (Conceptual)
+## 4. Knowledge & Visibility Model (Updated)
 
-### 6.1 Buyer Decision Logic
+### 4.1 Buyer View
 
-For each item:
+Per item negotiation, buyer sees:
 
-1. Collect offers from sellers:
-
-   * Price(s)
-   * Any additional perks (warranty, express delivery, bundle offers)
-   * Observed tone / respect
-
-2. Evaluate each seller offer using a **scoring function**, conceptually combining:
-
-   * **Price score:**
-
-     * Lower price → better
-     * If price exceeds item’s implicit budget share → heavily penalized
-   * **Behavior score:**
-
-     * Very rude → penalty
-     * Very sweet / helpful → bonus
-   * **Trust/consistency score:**
-
-     * Seller flip-flopping or contradicting itself → penalty
-   * **Retention perspective:**
-
-     * If buyer wants long-term relationship (scenario configurable), may favor consistent fair pricing over rock-bottom.
-
-3. Decide:
-
-   * Choose best seller for this item, if any pass thresholds.
-   * Optionally push for “final counter-offer” with top seller before finalizing.
-   * Or decide **not to purchase** that item.
-
-4. Enforce **global budget constraint**:
-
-   * The buyer considers cumulative spend so far across items when deciding:
-
-     * Accept / reject offers for remaining items
-     * Possibly drop lower-priority items to afford high-priority ones.
-
-### 6.2 Seller Decision Logic
-
-Given an incoming `@seller_name` message about item X:
-
-1. Parse buyer’s intent:
-
-   * Asking for first quote?
-   * Asking for discount?
-   * Threatening to go to “other sellers”?
-2. Consider numeric constraints:
-
-   * Cost price `c`
-   * Current offer price `p_current`
-   * Floor `least_price = p_min`
-3. Decide on new offer:
-
-   * If buyer’s ask < `p_min` → politely or rudely reject.
-   * If buyer’s ask between `p_min` and `selling_price`:
-
-     * Maybe meet in the middle or step down gradually, using priority weights:
-
-       * High retention weight → more flexibility
-       * High profit weight → more resistance
-4. Choose tone:
-
-   * Based on seller style configuration, plus buyer’s behavior:
-
-     * If buyer is very demanding, rude seller may push back.
-     * Sweet seller may stay polite and persuasive.
-5. Send response:
-
-   * New price offer (or refusal)
-   * Justification, marketing spin, or value proposition.
-
----
-
-## 7. Model Backends & Runtime Modes
-
-### 7.1 Two Inference Backends
-
-The product supports two categories of model backends:
-
-1. **Local inference (on device):**
-
-   * Using **LM Studio / Ollama** with local models (e.g., LLaMA-family, Mistral, etc.)
-   * Pros: no network dependency, full control.
-   * Cons: slower, likely **sequential** simulation to avoid resource contention.
-
-2. **Remote inference (OpenRouter):**
-
-   * Hosted models via HTTP APIs.
-   * Pros: can handle **batched / parallel** calls more easily; access to stronger models.
-   * Cons: network latency, cost, rate limits.
-
-### 7.2 Simulation Schedules
-
-* **Local mode:**
-
-  * Run **sequentially** item-by-item and message-by-message (to keep resource usage sane).
-  * Good for hackathon demos on a laptop.
-
-* **Remote mode:**
-
-  * Can support more **parallel calls**:
-
-    * Multiple sellers responding in parallel for the same buyer message.
-    * Multiple items processed in batched simulations.
-
-### 7.3 Streaming Responses
-
-All chat-like interactions should be **streamed** to the UI:
-
-* When buyer or sellers speak, the message appears token-by-token / line-by-line.
-* This makes the simulation feel like a real group chat unfolding in real time, even though it's synthetic.
-
----
-
-## 8. State & Data Handling
-
-### 8.1 In-Memory Marketplace State
-
-For hackathon scope, everything is stored **in memory** during the run:
-
-* **Buyer state:** demand map, budget, negotiation history (per item).
-* **Sellers state:** inventory, dynamic pricing movements, conversation flags.
-* **Conversations:** message history per item room.
-
-No need for full database design in this doc; conceptually:
-
-```text
-SimulationRun
-  - buyer_profile
-  - sellers: [SellerProfile]
-  - items: [ItemConfig]
-  - conversations: { item_name → ConversationLog }
-  - decisions: { item_name → PurchaseDecision }
-```
-
-### 8.2 Persistent Logs (Minimal)
-
-Even though we don’t version full marketplace state, we **do persist**:
-
-* Final **conversation logs per item** after negotiation ends.
-* Final **purchase decisions**:
-
-  * Which seller won item X
-  * Final agreed price
-  * Reason codes (if we choose to generate them)
-* This allows:
-
-  * Retro analysis of strategies
-  * Comparative runs with different model settings.
-
----
-
-## 9. User Experience / Configuration Flow
-
-### 9.1 Seller Configuration Form (up to 10 sellers)
-
-Fields per seller:
-
-* **Seller name / handle** (used as `@seller_name` in chat)
-* **Inventory table**:
+* Their own constraints:
 
   * Item name
+  * Quantity
+  * Min and max acceptable price
+* Sellers participating (by name/handle).
+* Messages received from each seller.
+* Only the information **sellers explicitly mention**:
+
+  * If seller chooses to say “my cost is 30, I can’t go below 35”, buyer sees that.
+  * Otherwise, buyer never sees those numbers.
+
+### 4.2 Seller View
+
+Per item negotiation, each seller sees:
+
+* Request context:
+
+  * Item name
+  * Quantity buyer wants
+  * Any item-related details buyer shares (e.g., use-case preferences).
+* Messages **from the buyer** that are either:
+
+  * Directed to them using `@seller_name`, or
+  * General “broadcast” messages if you choose to support that.
+* Their own internal config:
+
+  * cost_price, selling_price, least_price
+  * style, priorities
+
+They **never see**:
+
+* Other sellers’ prices/offers/messages.
+* Buyer’s interactions with other sellers.
+
+### 4.3 Orchestration Logic (Conceptual)
+
+* Internally, there is an orchestrator that:
+
+  * Receives buyer messages.
+  * Routes them to appropriate sellers based on `@handles`.
+  * Collects seller messages and presents them to the buyer.
+* But logically, it behaves like:
+
+  * Decentralized agents chatting in a group, with **visibility filtering** implemented at routing layer.
+
+---
+
+## 5. Negotiation Episode Structure (Adjusted)
+
+Each **negotiation episode** is:
+
+1. **Initialization:**
+
+   * Item `I` selected.
+   * Relevant sellers for `I` fetched from DB (where inventory includes `I`).
+   * Buyer’s per-item constraints loaded from DB:
+
+     * quantity, min_price, max_price.
+
+2. **Conversation Loop (LLM-driven):**
+
+   * Buyer sends initial message (e.g., “Hi, I need 3 units of X. What can you offer?”).
+   * Orchestrator:
+
+     * Routes buyer message to all sellers (or only those mentioned).
+   * Each seller agent:
+
+     * Generates response using LM Studio model based on:
+
+       * Their pricing structure.
+       * Their style and internal priorities.
+       * The buyer’s latest message.
+     * Response is recorded in DB and returned to buyer.
+   * Buyer:
+
+     * Sees all seller responses.
+     * Uses LM Studio model to:
+
+       * Think about trade-offs qualitatively.
+       * Check if any offer fits within `[min_price, max_price]`.
+       * Decide:
+
+         * Ask follow-ups (possibly @mentioning specific sellers).
+         * Push for better deal.
+         * Accept an offer.
+         * Reject all and walk away.
+
+3. **Termination:**
+
+   * Episode ends when:
+
+     * Buyer explicitly selects a seller for this item and price (within their constraints), or
+     * Buyer explicitly decides not to purchase this item.
+   * Final decision (seller, price, quantity, or “no deal”) is stored in DB.
+
+> No numeric scoring or formula is explicitly defined – the system just tells the LLM: “Reason about which offer is best based on your constraints and the conversation so far.”
+
+---
+
+## 6. Session & Multi-Negotiation Model
+
+### 6.1 Session Concept
+
+A **Session** = a configured environment with:
+
+* A single Buyer configuration:
+
+  * List of (item_name, quantity, min_price, max_price)
+* A set of Seller configurations:
+
+  * Inventory & internal parameters.
+
+This configuration is stored in the DB and can be reused.
+
+### 6.2 Multiple Negotiations per Session
+
+Once a session is configured:
+
+* You can start **multiple negotiation runs** without re-entering configs:
+
+  * For different subsets of items.
+  * For the same items again (e.g., repeated experiments).
+  * With variation in prompts (e.g., different buyer behavior instructions).
+
+Each **NegotiationRun** references:
+
+* `session_id`
+* `item_name`
+* A sequence of messages and a final outcome.
+
+The DB acts as the backbone tying:
+
+* Session → NegotiationRuns → Messages → Outcomes.
+
+---
+
+## 7. State & Database Model (Conceptual)
+
+At a high level, you’ll likely need the following logical entities in your DB (no implementation details, just structure):
+
+1. **Sessions**
+
+   * `session_id`
+   * `created_at`
+   * `description` (optional)
+
+2. **BuyerConfig**
+
+   * `session_id` (FK)
+   * Per-item rows:
+
+     * `item_name`
+     * `quantity`
+     * `min_price`
+     * `max_price`
+
+3. **SellerConfig**
+
+   * `seller_id`
+   * `session_id` (FK)
+   * `name/handle`
+   * `customer_retention_weight`
+   * `profit_maximization_weight`
+   * `style_profile` (rude/neutral/sweet label or similar)
+
+4. **SellerInventory**
+
+   * `seller_id` (FK)
+   * `item_name`
+   * `cost_price`
+   * `selling_price`
+   * `least_price`
+
+5. **NegotiationRuns**
+
+   * `negotiation_id`
+   * `session_id` (FK)
+   * `item_name`
+   * `status` (in_progress / completed / aborted)
+   * `started_at`, `ended_at`
+
+6. **Messages**
+
+   * `message_id`
+   * `negotiation_id` (FK)
+   * `sender_type` (buyer / seller)
+   * `sender_id` (seller_id or “buyer”)
+   * `text`
+   * `timestamp`
+   * Metadata: who it was routed to (for sellers), internal logs, etc.
+
+7. **Outcomes**
+
+   * `negotiation_id` (FK)
+   * `decision_type` (deal / no_deal)
+   * If `deal`:
+
+     * `seller_id`
+     * `final_price`
+     * `quantity`
+   * Optional: `llm_reasoning_summary` (a short explanation generated at the end).
+
+---
+
+## 8. Inference & Runtime (Finalized)
+
+### 8.1 Model Backend
+
+* Only **LM Studio** is used.
+* All agents (Buyer and Sellers) call into LM Studio with:
+
+  * Different system prompts and instructions.
+  * Same or different local models, depending on your LM Studio setup.
+
+### 8.2 Execution Pattern
+
+* For simplicity:
+
+  * Negotiations are run **sequentially**:
+
+    * Message → seller responses → buyer response → repeat.
+* You can still simulate “parallel” sellers by:
+
+  * Requesting all seller responses for a given buyer message in a single “step”.
+* Responses are **streamed** back to UI for chat-like experience.
+
+---
+
+## 9. What We Explicitly Removed / Changed
+
+* ❌ **Buyer internal knowledge of seller costs, least prices, or strategy knobs**
+
+  * Buyer only learns what sellers reveal in conversation.
+
+* ❌ **Seller long-term negotiation history as private knowledge**
+
+  * Sellers are stateless across runs (beyond static config in DB).
+
+* ❌ **Global budget optimization across items**
+
+  * Buyer only uses per-item `min_price` and `max_price` and quantity.
+
+* ❌ **Hand-engineered scoring & numeric decision rules (6.2)**
+
+  * No structured “score = a*price + b*behavior”.
+  * Decisions are left to LLM’s qualitative reasoning.
+
+* ❌ **OpenRouter / remote models (7.1 old)**
+
+  * Only LM Studio / local inference now.
+
+* ✅ **DB for all state (instead of pure in-memory)**
+
+  * Sessions, configs, negotiation logs, outcomes all persisted.
+  * Enables multiple negotiations on top of a single configuration.
+
+
+
+I’ll treat this as **“User Flow + Episode Lifecycle”** layered on top of the architecture we already defined.
+
+---
+
+## 1. Top-Level Concept: Negotiation Episode
+
+A **Negotiation Episode** is one complete run where:
+
+* You configure **seller agents** and their inventories,
+* Configure the **buyer’s purchase plan**,
+* The system computes which sellers can serve which items,
+* Then runs **per-item negotiation chats**, and
+* Ends with a **final receipt** summarizing all purchased items.
+
+Everything (config, chats, outcome) is tied to that episode.
+
+---
+
+## 2. Screen-by-Screen User Flow
+
+### 2.1 Start New Negotiation Episode
+
+**Entry point UI:**
+
+* Button: **“Start New Negotiation”**
+* System creates a new `episode_id` in the DB with status `draft`.
+
+Data created:
+
+* `Episode`:
+
+  * `episode_id`
+  * `created_at`
+  * `status = "draft"`
+
+The user now moves into a multi-step wizard:
+
+1. Add Sellers
+2. Configure Items & Catalog (if needed)
+3. Configure Buyer Purchase Plan
+4. Run Negotiations
+5. View Final Receipt
+
+---
+
+### 2.2 Step 1 – Add Seller Agents (One by One)
+
+UI: **“Add Seller”** form, repeated.
+
+For each seller, user fills:
+
+* **Seller identity**
+
+  * Seller name / handle (used for `@mentions` in chat)
+* **Item list (inventory)**
+
+  * Item (chosen from allowed items list)
+  * Available quantity
   * Cost price
-  * Selling price
-  * Least price
-* **Priority sliders / inputs:**
+  * Selling (listed) price
+  * Least acceptable price (floor)
+* **Internal profile (hidden from buyer, used for prompting)**
 
-  * Customer retention vs profit maximization
-* **Style configuration:**
+  * Importance of customer retention vs profit
+  * Speaking style: rude / neutral / very sweet
 
-  * Rude ↔ Neutral ↔ Very Sweet
+User can:
 
-### 9.2 Buyer Configuration Form
+* Save seller
+* Add another seller
+* Edit/remove sellers before finalizing episode config
 
-Fields:
+Data written per seller:
 
-* **Item demand map:**
+* `SellerConfig` linked to `episode_id`
+* `SellerInventory` rows for each item
 
-  * Add rows: item name + quantity
-* **Budget range:**
+> At this point, the **universe of sellers** for the episode is fixed.
 
-  * Min budget
-  * Max budget
-* (Optional) Preferences:
+---
 
-  * Price sensitivity
-  * Tone preference
-  * Max conversation length per item
+### 2.3 Step 2 – Available Items (Global Catalog)
 
-### 9.3 Model & Run Settings
+Two options (conceptually):
 
-* Choose:
+* **Hardcoded catalog** in backend (e.g., `["Laptop", "Phone Case", "Cable", ...]`)
+* Or a **Settings** page where admin/user defines the total list of available items.
 
-  * Local vs Remote model backend
-  * For each agent type (Buyer / Seller), which backend to use
-* Choose:
+In the episode flow, we just **use** this list:
 
-  * Number of items to simulate in this run
-  * Whether to run:
+* The “Add Seller” and “Buyer Purchase Plan” forms both **pick from the same catalog**.
+* This guarantees matching between seller inventory and buyer demand.
 
-    * Single run, or
-    * Multiple runs with slightly varied random seeds (for experimentation).
+Data:
 
-### 9.4 Simulation View
+* Not episode-specific; this is global “catalog” configuration.
 
-For each item:
+---
 
-* **Chat window**:
+### 2.4 Step 3 – Configure Buyer Purchase Plan
 
-  * Shows buyer messages and each seller’s responses.
-  * From the viewer’s perspective, we display the full conversation (for debugging), but logically sellers don’t see each other.
-* **Sidebar panel**:
+UI: **“Buyer Purchase Plan”** form.
+
+For the current `episode_id`, user defines:
+
+For each planned item:
+
+* Choose **Item** (from catalog)
+* Enter **Quantity to purchase**
+* Set **Minimum acceptable price** per unit (buyer’s lower bound)
+* Set **Maximum acceptable price** per unit (buyer’s upper bound)
+
+Example row:
+
+* Item: `Phone Case`
+* Quantity: `2`
+* Min price: `8`
+* Max price: `15`
+
+User can add multiple rows:
+
+* `[(item_1, qty_1, min_1, max_1), (item_2, qty_2, min_2, max_2), ...]`
+
+Data written:
+
+* `BuyerConfig` rows linked to `episode_id`
+  (one row per item the buyer wants)
+
+> Key constraint:
+> Buyer has **no global budget**, only *per-item* min/max price and quantity.
+
+---
+
+### 2.5 Step 4 – Match Sellers to Items (Algorithmic Seller Discovery)
+
+Once sellers and buyer plan are defined, user clicks something like **“Generate Negotiations”**.
+
+System does:
+
+1. For each item in the **Buyer Purchase Plan**:
+
+   * Look up all `SellerInventory` rows in this episode where:
+
+     * `item_name` matches
+     * `available_quantity > 0` (or at least enough for requested qty if you want that check)
+
+2. Build a mapping:
+
+   ```text
+   item_name → [seller_1, seller_2, ..., seller_k]
+   ```
+
+3. For each (episode, item) pair with at least one seller:
+
+   * Create a **Negotiation Record**:
+
+     * `negotiation_id`
+     * `episode_id`
+     * `item_name`
+     * Linked sellers
+     * Status = `pending`
+
+If no seller is available for an item:
+
+* The system can immediately mark that item as `unfulfillable` and show this in the UI before negotiations even start.
+
+At the end of this step, the episode has:
+
+* A defined **set of negotiation rooms**, one per buyer-item, each with:
+
+  * Buyer
+  * Set of candidate sellers.
+
+---
+
+### 2.6 Step 5 – Per-Item Negotiation Chats
+
+For each item in the Buyer Purchase Plan that has at least one seller:
+
+#### 2.6.1 Start Chat for Item X
+
+UI:
+
+* You click on an item row (e.g., `Phone Case`) and enter its **Negotiation Chat View**:
 
   * Shows:
 
-    * Sellers involved for this item
-    * Their cost / selling / least prices (visible only to the tool owner, not to agents logically)
-    * Buyer’s remaining budget.
+    * Item name & requested quantity
+    * Buyer’s min/max price constraints
+    * Participating sellers (handles only)
+    * Conversation window
 
-At the end of each item negotiation:
+Backend:
 
-* Display **Decision card**:
+* Instantiate a **Buyer Agent instance** keyed by `(episode_id, negotiation_id, item_name)`.
+* For each participating seller, instantiate a **Seller Agent instance** logged against that `negotiation_id`.
 
-  * Selected seller
-  * Final price vs initial selling price vs least_price
-  * Savings / margin stats.
+> Note: This is conceptual “instance”; in practice it’s just state + prompt context per agent within the negotiation.
+
+#### 2.6.2 Chat Mechanics
+
+* **Buyer sends first message** (generated by LLM or user-triggered via “Start Negotiation” button).
+
+* System:
+
+  * Records the message in `Messages` table.
+  * Routes the content to all relevant **Seller Agents** for this item.
+
+* Each **Seller Agent**:
+
+  * Calls LM Studio with:
+
+    * Their internal inventory/pricing for this item.
+    * Their style/priorities.
+    * The buyer’s latest message.
+  * Generates their reply.
+  * Reply is recorded in `Messages`, then displayed in the UI under their handle.
+
+* Buyer Agent:
+
+  * Sees all seller replies for that item.
+  * Uses LM Studio reasoning to:
+
+    * Ask follow-ups
+    * Focus on specific sellers using `@seller_name`
+    * Decide whether any offer is acceptable within `[min_price, max_price]`
+    * Decide when to stop.
+
+> There is **no explicit scoring algorithm** here – decisions are all in “prompted reasoning” space.
+
+#### 2.6.3 Ending the Negotiation for Item X
+
+The item’s negotiation ends when the Buyer Agent:
+
+* Accepts an offer:
+
+  * Pick `seller_id`
+  * Agree on `final_price`
+  * Confirm `quantity` (or adjust if needed)
+* Or declares **“no deal”**.
+
+System then:
+
+* Marks the `NegotiationRun` as `completed`.
+* Writes an `Outcome` row for this `negotiation_id`:
+
+  * If deal:
+
+    * `decision_type = "deal"`
+    * `seller_id`
+    * `final_price`
+    * `quantity`
+  * If no deal:
+
+    * `decision_type = "no_deal"`
+
+Optionally decrements seller’s available quantity in `SellerInventory` for that item (if we want stock depletion to matter across negotiations in the same episode).
+
+Repeat for each item.
+
+Negotiations for multiple items can be run:
+
+* Sequentially (simple for hackathon + LM Studio), or
+* Conceptually “independently” from a user perspective (one chat per item).
 
 ---
 
-## 10. Success Criteria & Metrics
+### 2.7 Step 6 – Final Receipt
 
-To evaluate the product and the simulations, we can track:
+After all item negotiations are done (or the user chooses to stop):
 
-* **Buyer-centric metrics:**
+UI: **“View Final Receipt”** for the episode.
 
-  * Total spend vs max budget
-  * Number of items successfully purchased
-  * Average discount (selling_price − final_price)
-  * Number of negotiation turns per item
+System aggregates from `Outcomes`:
 
-* **Seller-centric metrics:**
+* For each item in Buyer Purchase Plan:
 
-  * Profit per item (final_price − cost_price)
-  * Times they lost to other sellers (even if they don’t know it in-world)
-  * Correlation between tone and win rate
+  * Was a deal made?
+  * If yes:
 
-* **System-centric metrics:**
+    * Seller chosen
+    * Final unit price
+    * Quantity purchased
+    * Total price
+* Items with no deal are displayed as **“Not Purchased”** with a reason (e.g., “No acceptable offer within min–max range”).
 
-  * Latency per LLM call (local vs remote)
-  * Tokens per simulation run
-  * Concurrency behavior (for OpenRouter runs)
+The **Final Receipt** view shows:
+
+* **Episode summary:**
+
+  * `episode_id`, timestamp
+* **Itemized table:**
+
+  * Item
+  * Quantity requested
+  * Quantity purchased
+  * Seller
+  * Final price
+  * Total cost (per item)
+  * Deal / No deal status
+* **Totals:**
+
+  * Total number of items successfully purchased
+  * Total spend (sum of item totals)
+
+All of this is persisted in the DB, so you can later:
+
+* Re-open an episode
+* Inspect per-item negotiation logs
+* Compare behavior across episodes.
 
 ---
 
-## 11. Future Extensions (Out of Scope but Natural Next Steps)
+## 3. How This Fits the Overall Idea
 
-* Multiple buyers simultaneously competing for limited stock.
-* Marketplace coordinator agent:
+Putting it all together:
 
-  * Sets recommended prices
-  * Enforces marketplace rules
-* Fraud/risk agent:
+* **Episode = One full configured world**:
 
-  * Flags suspicious sellers or unrealistic offers.
-* Recommendation agent:
+  * Sellers + Inventory
+  * Buyer purchase plan (per-item constraints)
+  * Negotiations per item
+  * Final receipt
 
-  * Suggests alternative items if item can’t be purchased within budget.
-* Basic reinforcement / learning logic:
+* **Flow** is:
 
-  * Sellers adjusting future strategies based on win/loss logs.
-* Visualization layer:
+  1. Start new episode
+  2. Add sellers one by one via UI form
+  3. Define buyer’s items, quantities, and per-item min/max prices
+  4. System computes which sellers are viable for each item
+  5. For each item, run a **Buyer ↔ Multiple Sellers** chat in isolation
+  6. Once all are done, compile a **final receipt** from outcomes
 
-  * Price trajectories, negotiation curves, strategy clustering.
+* **LLM (LM Studio)** drives:
 
----
+  * All agent decisions
+  * All negotiation behavior
+  * All qualitative reasoning (no hand-coded scores).
 
-## 12. Summary
 
-You now have a full **product and conceptual architecture** for:
 
-* A **1 Buyer ↔ N Sellers** multi-agent ecommerce marketplace simulator
-* With:
-
-  * Asymmetric information
-  * WhatsApp-style multi-agent chat for each item
-  * Dynamic negotiation strategies driven by LLMs
-  * Dual model backends (local and remote)
-  * In-memory state & logged conversations for hackathon-friendly implementation.
-
-Next step (when you’re ready) would be to turn this into:
-
-* A concrete LangGraph graph design (nodes/edges for Buyer, Sellers, and message routing), and
-* Actual backend implementation using Ollama/LM Studio + OpenRouter.
-
-But for now, this doc covers the **idea and behavior** in full, as requested.
