@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # LLM Request Configuration
     LLM_MAX_RETRIES: int = 3
     LLM_RETRY_DELAY: int = 2  # seconds, base for exponential backoff
+    LLM_DEFAULT_TEMPERATURE: float = 0.7
+    LLM_DEFAULT_MAX_TOKENS: int = 500
     
     # OpenRouter Configuration
     LLM_ENABLE_OPENROUTER: bool = False
