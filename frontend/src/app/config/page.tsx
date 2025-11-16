@@ -14,10 +14,11 @@ import { initializeSession } from '@/lib/api/simulation';
 import { validateEpisodeConfig } from '@/utils/validators';
 import { ROUTES } from '@/lib/router';
 import { APIError } from '@/lib/api/client';
+import { generateItemId } from '@/utils/helpers';
 
 export default function ConfigPage() {
   const router = useRouter();
-  const { buyer, sellers, llmConfig, loadSampleData } = useConfig();
+  const { buyer, sellers, llmConfig } = useConfig();
   const { initializeSession: setSession } = useSession();
   
   const [loading, setLoading] = useState(false);
@@ -35,8 +36,27 @@ export default function ConfigPage() {
       inventory: seller.inventory.filter(item => item.item_name && item.item_name.trim() !== '')
     }));
     
-    // Validate configuration with cleaned sellers
-    const errors = validateEpisodeConfig(buyer, cleanedSellers);
+    // Normalize item IDs based on names for consistency
+    const normalizedBuyer = {
+      ...buyer,
+      shopping_list: buyer.shopping_list.map(item => ({
+        ...item,
+        item_name: item.item_name.trim(),
+        item_id: generateItemId(item.item_name)
+      }))
+    };
+    
+    const normalizedSellers = cleanedSellers.map(seller => ({
+      ...seller,
+      inventory: seller.inventory.map(item => ({
+        ...item,
+        item_name: item.item_name.trim(),
+        item_id: generateItemId(item.item_name)
+      }))
+    }));
+    
+    // Validate configuration with normalized data
+    const errors = validateEpisodeConfig(normalizedBuyer, normalizedSellers);
     console.log('Validation errors:', errors);
     
     if (errors.length > 0) {
@@ -53,8 +73,8 @@ export default function ConfigPage() {
       console.log('Calling initializeSession API...');
       
       const response = await initializeSession({
-        buyer,
-        sellers: cleanedSellers,
+        buyer: normalizedBuyer,
+        sellers: normalizedSellers,
         llm_config: llmConfig,
       });
 
@@ -84,11 +104,6 @@ export default function ConfigPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleUseSampleData = () => {
-    loadSampleData();
-    setError(null);
   };
 
   return (
@@ -149,13 +164,7 @@ export default function ConfigPage() {
         {/* Actions */}
         <div className="mt-8 bg-white rounded-lg p-6 shadow-sm border border-neutral-200">
           <div className="flex items-center justify-between mb-4">
-            <Button
-              variant="ghost"
-              onClick={handleUseSampleData}
-              disabled={loading}
-            >
-              Use Sample Data
-            </Button>
+            <div />
 
             <Button
               size="lg"

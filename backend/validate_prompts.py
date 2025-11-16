@@ -33,7 +33,7 @@ seller = Seller(
     ]
 )
 
-seller_msgs = render_seller_prompt(seller, constraints, [], "Bob")
+seller_msgs = render_seller_prompt(seller, seller.inventory[0], constraints, [], "Bob")
 print("=== SELLER PROMPT ===")
 print(seller_msgs[0]['content'])
 

@@ -8,7 +8,7 @@ HOW: Template strings with context injection, return ChatMessage lists
 
 from typing import List
 from ..llm.types import ChatMessage
-from ..models.agent import BuyerConstraints, Seller, SellerProfile
+from ..models.agent import BuyerConstraints, Seller, SellerProfile, InventoryItem
 from ..models.message import Message
 
 
@@ -75,6 +75,7 @@ Write your message NOW (under 100 words):"""
 
 def render_seller_prompt(
     seller: Seller,
+    inventory_item: InventoryItem,
     constraints: BuyerConstraints,
     conversation_history: List[Message],
     buyer_name: str
@@ -86,16 +87,6 @@ def render_seller_prompt(
     WHY: Seller needs pricing constraints and behavioral instructions
     HOW: System message with inventory/priority/style, user message with filtered history
     """
-    # Find matching inventory item
-    inventory_item = None
-    for item in seller.inventory:
-        if item.item_id == constraints.item_id:
-            inventory_item = item
-            break
-    
-    if not inventory_item:
-        raise ValueError(f"Seller {seller.name} does not have item {constraints.item_id}")
-    
     # Build priority instruction
     if seller.profile.priority == "customer_retention":
         priority_instruction = "Your priority is building long-term customer relationships. Be willing to offer competitive prices to keep the buyer happy."

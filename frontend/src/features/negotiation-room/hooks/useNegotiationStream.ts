@@ -145,19 +145,9 @@ export function useNegotiationStream({
           break;
 
         case 'debug_raw':
-          // Debug raw responses disabled - uncomment below to enable
-          // console.log('Debug Raw Response:', event);
-          // const debugMessage: Message = {
-          //   message_id: `debug_${Date.now()}_${Math.random()}`,
-          //   turn: event.round,
-          //   timestamp: event.timestamp,
-          //   sender_type: 'system',
-          //   sender_id: 'debug',
-          //   sender_name: `🔍 DEBUG: ${event.agent_name} (${event.agent_type})`,
-          //   message: `**RAW RESPONSE (Complete A-Z):**\n\n${event.raw_response}\n\n---\n\n**SANITIZED:**\n\n${event.sanitized_message}`,
-          //   mentioned_agents: [],
-          // };
-          // addMessage(roomId, debugMessage);
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('Debug raw event:', event);
+          }
           break;
 
         case 'round_start':

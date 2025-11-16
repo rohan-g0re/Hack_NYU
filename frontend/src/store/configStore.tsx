@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import type { BuyerConfig, SellerConfig, LLMConfig, ShoppingItem, InventoryItem } from '@/lib/types';
-import { SellerPriority, SpeakingStyle, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS } from '@/lib/constants';
+import { DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS } from '@/lib/constants';
 
 interface ConfigState {
   buyer: BuyerConfig;
@@ -19,7 +19,6 @@ interface ConfigContextValue extends ConfigState {
   updateSeller: (index: number, seller: SellerConfig) => void;
   removeSeller: (index: number) => void;
   updateLLMConfig: (config: Partial<LLMConfig>) => void;
-  loadSampleData: () => void;
   resetConfig: () => void;
 }
 
@@ -110,104 +109,6 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const loadSampleData = useCallback(() => {
-    const sampleBuyer: BuyerConfig = {
-      name: 'John Doe',
-      shopping_list: [
-        {
-          item_id: 'item_001',
-          item_name: 'Laptop',
-          quantity_needed: 2,
-          min_price_per_unit: 900,
-          max_price_per_unit: 1200,
-        },
-        {
-          item_id: 'item_002',
-          item_name: 'Mouse',
-          quantity_needed: 5,
-          min_price_per_unit: 15,
-          max_price_per_unit: 25,
-        },
-      ],
-    };
-
-    const sampleSellers: SellerConfig[] = [
-      {
-        name: 'TechStore',
-        inventory: [
-          {
-            item_id: 'item_001',
-            item_name: 'Laptop',
-            cost_price: 800,
-            selling_price: 1200,
-            least_price: 1000,
-            quantity_available: 10,
-          },
-        ],
-        profile: {
-          priority: SellerPriority.CUSTOMER_RETENTION,
-          speaking_style: SpeakingStyle.VERY_SWEET,
-        },
-      },
-      {
-        name: 'GadgetHub',
-        inventory: [
-          {
-            item_id: 'item_001',
-            item_name: 'Laptop',
-            cost_price: 750,
-            selling_price: 1150,
-            least_price: 950,
-            quantity_available: 5,
-          },
-          {
-            item_id: 'item_002',
-            item_name: 'Mouse',
-            cost_price: 10,
-            selling_price: 30,
-            least_price: 20,
-            quantity_available: 50,
-          },
-        ],
-        profile: {
-          priority: SellerPriority.MAXIMIZE_PROFIT,
-          speaking_style: SpeakingStyle.RUDE,
-        },
-      },
-      {
-        name: 'CompuWorld',
-        inventory: [
-          {
-            item_id: 'item_001',
-            item_name: 'Laptop',
-            cost_price: 820,
-            selling_price: 1180,
-            least_price: 1020,
-            quantity_available: 8,
-          },
-          {
-            item_id: 'item_002',
-            item_name: 'Mouse',
-            cost_price: 12,
-            selling_price: 28,
-            least_price: 18,
-            quantity_available: 100,
-          },
-        ],
-        profile: {
-          priority: SellerPriority.CUSTOMER_RETENTION,
-          speaking_style: SpeakingStyle.VERY_SWEET,
-        },
-      },
-    ];
-
-    setState({
-      buyer: sampleBuyer,
-      sellers: sampleSellers,
-      llmConfig: initialLLMConfig,
-    });
-  }, []);
-
   const resetConfig = useCallback(() => {
     setState(initialState);
   }, []);
@@ -222,7 +123,6 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     updateSeller,
     removeSeller,
     updateLLMConfig,
-    loadSampleData,
     resetConfig,
   };
 

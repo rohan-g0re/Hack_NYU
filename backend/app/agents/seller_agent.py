@@ -68,15 +68,16 @@ class SellerAgent:
         Returns:
             Dict with "message" (str) and optional "offer" (dict with price, quantity)
         """
-        # Render prompt with context
-        messages = render_seller_prompt(
-            seller=self.seller,
-            constraints=constraints,
-            conversation_history=room_state.conversation_history,
-            buyer_name=buyer_name
-        )
-        
         try:
+            # Render prompt with context
+            messages = render_seller_prompt(
+                seller=self.seller,
+                inventory_item=self.inventory_item,
+                constraints=constraints,
+                conversation_history=room_state.conversation_history,
+                buyer_name=buyer_name
+            )
+            
             # Generate response
             result = await self.provider.generate(
                 messages=messages,
@@ -109,12 +110,13 @@ class SellerAgent:
             }
             
         except Exception as e:
-            logger.error(f"Seller agent error for {self.seller.name}: {e}")
+            logger.error(f"Seller agent error for {self.seller.name}: {e}", exc_info=True)
             # Fallback message
             return {
-                "message": "I'm reviewing your request. Let me get back to you.",
+                "message": "I had an internal error and couldn't generate an offer this round.",
                 "offer": None,
-                "raw_response": f"ERROR: {str(e)}"
+                "raw_response": f"ERROR: {str(e)}",
+                "error": "internal_error"
             }
     
     def _sanitize_message(self, text: str) -> str:

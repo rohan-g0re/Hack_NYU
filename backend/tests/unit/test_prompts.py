@@ -109,6 +109,7 @@ def test_render_seller_prompt_structure(sample_seller, sample_buyer_constraints)
     """Test seller prompt has correct structure."""
     messages = render_seller_prompt(
         seller=sample_seller,
+        inventory_item=sample_seller.inventory[0],
         constraints=sample_buyer_constraints,
         conversation_history=[],
         buyer_name="Bob"
@@ -123,6 +124,7 @@ def test_render_seller_prompt_inventory_bounds(sample_seller, sample_buyer_const
     """Test seller prompt includes inventory pricing bounds."""
     messages = render_seller_prompt(
         seller=sample_seller,
+        inventory_item=sample_seller.inventory[0],
         constraints=sample_buyer_constraints,
         conversation_history=[],
         buyer_name="Bob"
@@ -140,6 +142,7 @@ def test_render_seller_prompt_style(sample_seller, sample_buyer_constraints):
     """Test seller prompt reflects speaking style."""
     messages = render_seller_prompt(
         seller=sample_seller,
+        inventory_item=sample_seller.inventory[0],
         constraints=sample_buyer_constraints,
         conversation_history=[],
         buyer_name="Bob"
@@ -155,6 +158,7 @@ def test_render_seller_prompt_priority(sample_seller, sample_buyer_constraints):
     """Test seller prompt reflects priority."""
     messages = render_seller_prompt(
         seller=sample_seller,
+        inventory_item=sample_seller.inventory[0],
         constraints=sample_buyer_constraints,
         conversation_history=[],
         buyer_name="Bob"
@@ -170,6 +174,7 @@ def test_render_seller_prompt_offer_format(sample_seller, sample_buyer_constrain
     """Test seller prompt includes JSON offer format hint."""
     messages = render_seller_prompt(
         seller=sample_seller,
+        inventory_item=sample_seller.inventory[0],
         constraints=sample_buyer_constraints,
         conversation_history=[],
         buyer_name="Bob"
