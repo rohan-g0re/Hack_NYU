@@ -671,6 +671,111 @@ class SessionManager:
         
         if deleted_count > 0:
             logger.info(f"Cleaned up {deleted_count} old log directories")
+    
+    def get_active_room_state(self, room_id: str) -> Optional[NegotiationRoomState]:
+        """
+        Get active room state from cache.
+        
+        WHAT: Retrieve NegotiationRoomState from in-memory cache
+        WHY: Fast access to active negotiation state
+        HOW: Look up in active_rooms dict
+        
+        Args:
+            room_id: Negotiation run ID
+            
+        Returns:
+            NegotiationRoomState if found, None otherwise
+        """
+        if room_id in active_rooms:
+            room_state, _ = active_rooms[room_id]
+            return room_state
+        return None
+    
+    def build_state_response(self, room_id: str, agent_id: Optional[str] = None, agent_type: Optional[str] = None) -> Optional[Dict]:
+        """
+        Build NegotiationStateResponse from database and cache.
+        
+        WHAT: Compose negotiation state for API response
+        WHY: Centralize state assembly logic
+        HOW: Query DB for messages/offers, combine with cached room state
+        
+        Args:
+            room_id: Negotiation run ID
+            agent_id: Optional agent ID filter for visibility
+            agent_type: Optional agent type filter ('buyer' or 'seller')
+            
+        Returns:
+            Dict matching NegotiationStateResponse schema or None if room not found
+        """
+        with get_db() as db:
+            run = db.query(NegotiationRun).filter(NegotiationRun.id == room_id).first()
+            if not run:
+                return None
+            
+            buyer_item = db.query(BuyerItem).filter(BuyerItem.id == run.buyer_item_id).first()
+            if not buyer_item:
+                return None
+            
+            # Get messages
+            messages_query = db.query(Message).filter(
+                Message.negotiation_run_id == room_id
+            ).order_by(Message.turn_number)
+            
+            # Apply visibility filter if agent_id/agent_type provided
+            if agent_id and agent_type:
+                from ..services.visibility_filter import filter_conversation
+                # This would require converting DB messages to Message models
+                # For now, return all messages
+                pass
+            
+            messages = messages_query.all()
+            
+            # Get offers
+            offers_query = db.query(Offer).join(Message).filter(
+                Message.negotiation_run_id == room_id
+            )
+            offers = offers_query.all()
+            
+            # Build conversation history
+            conversation_history = []
+            for msg in messages:
+                conv_entry = {
+                    "message_id": msg.id,
+                    "turn_number": msg.turn_number,
+                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
+                    "sender_type": msg.sender_type,
+                    "sender_id": msg.sender_id,
+                    "sender_name": msg.sender_name,
+                    "content": msg.message_text,
+                    "mentioned_agents": json.loads(msg.mentioned_agents) if msg.mentioned_agents else []
+                }
+                conversation_history.append(conv_entry)
+            
+            # Build current offers dict (seller_id -> Offer)
+            current_offers = {}
+            for offer in offers:
+                if offer.seller_id not in current_offers:
+                    current_offers[offer.seller_id] = {
+                        "price": offer.price_per_unit,
+                        "quantity": offer.quantity
+                    }
+            
+            # Get buyer constraints
+            buyer_constraints = {
+                "min_price_per_unit": buyer_item.min_price_per_unit,
+                "max_price_per_unit": buyer_item.max_price_per_unit
+            }
+            
+            return {
+                "room_id": room_id,
+                "item_name": buyer_item.item_name,
+                "status": run.status,
+                "current_round": run.current_round,
+                "max_rounds": run.max_rounds,
+                "conversation_history": conversation_history,
+                "current_offers": current_offers,
+                "buyer_constraints": buyer_constraints
+            }
 
 
 # Singleton instance

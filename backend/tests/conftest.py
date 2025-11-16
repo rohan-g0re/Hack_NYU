@@ -8,10 +8,13 @@ HOW: Define pytest markers, fixtures, and test helpers
 
 import pytest
 import asyncio
+import os
+import httpx
 from typing import AsyncIterator
 from unittest.mock import patch
 
 from app.llm.provider_factory import reset_provider
+from app.core.config import settings
 
 
 def pytest_configure(config):
@@ -42,6 +45,12 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "requires_lm_studio: Tests that require running LM Studio instance"
+    )
+    config.addinivalue_line(
+        "markers", "requires_openrouter: Tests that require OpenRouter API key and enabled provider"
+    )
+    config.addinivalue_line(
+        "markers", "perf: Performance tests that measure latency and throughput"
     )
 
 
@@ -147,4 +156,63 @@ MOCK_MODELS_RESPONSE = {
         {"id": "model-2", "object": "model"}
     ]
 }
+
+
+# Skip logic helpers for live provider tests
+def check_openrouter_available():
+    """
+    Check if OpenRouter is available for testing.
+    
+    WHAT: Verify OpenRouter provider is enabled and API key is set
+    WHY: Skip tests if provider not configured
+    HOW: Check env vars and settings
+    """
+    run_live = os.getenv("RUN_LIVE_PROVIDER_TESTS", "false").lower() == "true"
+    if not run_live:
+        return False
+    
+    provider = os.getenv("LLM_PROVIDER", settings.LLM_PROVIDER)
+    enable_openrouter = os.getenv("LLM_ENABLE_OPENROUTER", str(settings.LLM_ENABLE_OPENROUTER)).lower() == "true"
+    api_key = os.getenv("OPENROUTER_API_KEY", settings.OPENROUTER_API_KEY)
+    
+    return provider == "openrouter" and enable_openrouter and bool(api_key)
+
+
+async def check_lm_studio_available():
+    """
+    Check if LM Studio is available for testing.
+    
+    WHAT: Verify LM Studio server is reachable
+    WHY: Skip tests if server not running
+    HOW: Attempt HTTP connection to base URL
+    """
+    run_live = os.getenv("RUN_LIVE_PROVIDER_TESTS", "false").lower() == "true"
+    if not run_live:
+        return False
+    
+    provider = os.getenv("LLM_PROVIDER", settings.LLM_PROVIDER)
+    if provider != "lm_studio":
+        return False
+    
+    base_url = os.getenv("LM_STUDIO_BASE_URL", settings.LM_STUDIO_BASE_URL)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{base_url}/models", timeout=2.0)
+            return response.status_code == 200
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def skip_if_no_openrouter():
+    """Skip test if OpenRouter not available."""
+    if not check_openrouter_available():
+        pytest.skip("OpenRouter not available (set RUN_LIVE_PROVIDER_TESTS=true, LLM_PROVIDER=openrouter, LLM_ENABLE_OPENROUTER=true, OPENROUTER_API_KEY)")
+
+
+@pytest.fixture
+async def skip_if_no_lm_studio():
+    """Skip test if LM Studio not available."""
+    if not await check_lm_studio_available():
+        pytest.skip("LM Studio not available (set RUN_LIVE_PROVIDER_TESTS=true, LLM_PROVIDER=lm_studio, ensure LM Studio server running)")
 

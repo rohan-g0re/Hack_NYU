@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # Session Management
     SESSION_CLEANUP_HOURS: int = 1  # TTL for active_rooms cache
     
+    # Streaming / SSE
+    SSE_HEARTBEAT_INTERVAL: int = 15  # seconds between heartbeat events
+    SSE_RETRY_TIMEOUT: int = 5  # seconds for SSE retry timeout
+    
     class Config:
         # Look for .env in project root (Hack_NYU/.env) first, then backend/.env
         env_file = [
