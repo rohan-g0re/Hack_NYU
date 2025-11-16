@@ -120,11 +120,11 @@ class SellerAgent:
     
     def _sanitize_message(self, text: str) -> str:
         """
-        Sanitize LLM output, removing JSON blocks.
+        Sanitize LLM output, removing JSON blocks and echoed conversation history.
         
-        WHAT: Clean message text, remove offer JSON (reasoning tokens handled by frontend)
-        WHY: Keep only the conversational message, separate from structured offers
-        HOW: Remove JSON blocks, normalize whitespace
+        WHAT: Clean message text, remove offer JSON and prevent echo of conversation history
+        WHY: Keep only the seller's original message, not repeated buyer messages
+        HOW: Remove JSON blocks, detect and remove echoed history patterns, normalize whitespace
         """
         if not text:
             return ""
@@ -133,14 +133,56 @@ class SellerAgent:
         text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
         text = re.sub(r'```\s*', '', text)
         
-        # Remove JSON offer blocks
+        # Remove JSON offer blocks and malformed JSON fragments
         text = re.sub(r'\{[^}]*"offer"[^}]*\}', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'\}\s*\}+', '', text)  # Remove trailing closing braces like "} }"
+        
+        # Split into lines and filter out echoed conversation history
+        lines = text.split('\n')
+        filtered_lines = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+                
+            # Skip lines that are clearly echoed conversation history
+            # Pattern: "Name: message" where Name matches common buyer/seller names
+            # This detects when the LLM is repeating the conversation history format
+            if re.match(r'^(John Doe|Buyer|CompuWorld|GadgetHub|TechStore|Unknown):\s+', stripped, re.IGNORECASE):
+                # This looks like echoed history, skip it
+                # But allow if it's the seller's own name (they might reference themselves)
+                if not stripped.startswith(f"{self.seller.name}:") and not stripped.startswith(f"{self.seller.name.upper()}:"):
+                    continue
+            
+            # Also skip lines that look like conversation history markers
+            # Pattern: "Conversation history:" or similar
+            if re.match(r'^(Conversation history|Recent conversation|History):', stripped, re.IGNORECASE):
+                continue
+                
+            filtered_lines.append(line)
+        
+        text = '\n'.join(filtered_lines)
+        
+        # Additional check: if the entire text starts with a name pattern that's not the seller's name,
+        # it's likely echoed history - remove the leading name pattern
+        # This handles cases where the buyer's entire message is echoed at the start
+        seller_name_pattern = re.escape(self.seller.name)
+        if not re.match(rf'^{seller_name_pattern}:', text, re.IGNORECASE):
+            # Remove leading "Name: " pattern if present (but keep the rest)
+            text = re.sub(r'^[A-Za-z\s]+:\s+', '', text, count=1)
         
         # Collapse whitespace
         text = re.sub(r'\s+', ' ', text)
         
         # Trim
         text = text.strip()
+        
+        # Final check: if after all filtering the text is empty or only contains
+        # remnants of echoed content (like just "@mentions" without context),
+        # return empty string to trigger fallback message
+        if not text or (len(text) < 10 and '@' in text):
+            return ""
         
         # Limit length - increased for longer responses
         if len(text) > 2000:

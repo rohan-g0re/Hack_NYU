@@ -24,8 +24,7 @@ def filter_conversation(
     
     Visibility Rules:
     - Buyer sees: all buyer messages, seller messages where buyer is in visibility list
-    - Seller sees: all messages (buyer and seller), but other sellers' private messages
-      are marked as private in the visibility field
+    - Seller sees: ONLY buyer messages (sellers cannot see other sellers' messages)
     
     Args:
         history: Full conversation history
@@ -55,8 +54,9 @@ def filter_conversation(
                 filtered.append(msg)
         
         elif agent_type == "seller":
-            # Seller sees all messages (but visibility field indicates privacy)
-            filtered.append(msg)
+            # Seller sees ONLY buyer messages (not other sellers' messages)
+            if sender_type == "buyer":
+                filtered.append(msg)
     
     return filtered
 

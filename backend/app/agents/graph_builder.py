@@ -240,8 +240,29 @@ class NegotiationGraph:
                 max_tokens=self.max_tokens
             )
             
+            # Filter conversation for buyer's visibility
+            buyer_history = filter_conversation(
+                room_state.conversation_history,
+                room_state.buyer_id,
+                "buyer"
+            )
+            
+            # Create temporary state with filtered history
+            temp_state = NegotiationRoomState(
+                room_id=room_state.room_id,
+                buyer_id=room_state.buyer_id,
+                buyer_name=room_state.buyer_name,
+                buyer_constraints=room_state.buyer_constraints,
+                sellers=room_state.sellers,
+                conversation_history=buyer_history,  # Use filtered history
+                current_round=room_state.current_round,
+                max_rounds=room_state.max_rounds,
+                llm_provider=room_state.llm_provider,
+                llm_model=room_state.llm_model
+            )
+            
             logger.info(f"Running buyer turn for round {room_state.current_round}")
-            result = await buyer_agent.run_turn(room_state)
+            result = await buyer_agent.run_turn(temp_state)
             logger.info(f"Buyer agent returned result: {result}")
             
             if not result:

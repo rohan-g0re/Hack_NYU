@@ -9,6 +9,7 @@ HOW: HTTPX client with retries, SSE parsing, OpenAI-compatible API
 import httpx
 import json
 import asyncio
+import re
 from typing import AsyncIterator
 
 from .types import (
@@ -46,6 +47,66 @@ class LMStudioProvider:
             ),
             http2=False  # Windows ARM compatibility
         )
+    
+    def _disable_thinking_in_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        """
+        Add /no_think directive to messages for Qwen3 models.
+        
+        This is a soft switch mechanism for Qwen3 that works alongside
+        the enable_thinking parameter. According to Qwen3 docs, adding
+        /no_think to user messages disables thinking mode.
+        
+        Args:
+            messages: Original conversation messages
+            
+        Returns:
+            Modified messages with /no_think directive
+        """
+        if not messages:
+            return messages
+        
+        modified_messages = messages.copy()
+        
+        # Add /no_think to the system message if present
+        for msg in modified_messages:
+            if msg.get("role") == "system":
+                content = msg.get("content", "")
+                if "/no_think" not in content:
+                    msg["content"] = f"{content}\n\n/no_think"
+                break
+        else:
+            # If no system message, add /no_think to the first user message
+            for msg in modified_messages:
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if "/no_think" not in content:
+                        msg["content"] = f"{content} /no_think"
+                    break
+        
+        return modified_messages
+    
+    def _strip_thinking_blocks(self, text: str) -> str:
+        """
+        Remove <think>...</think> blocks from text as a final safety net.
+        
+        This handles cases where the model still generates thinking content
+        despite API parameters and message directives.
+        
+        Args:
+            text: Raw text that may contain thinking blocks
+            
+        Returns:
+            Text with thinking blocks removed
+        """
+        # Remove <think>...</think> blocks (non-greedy match)
+        # This handles both <think> and <thinking> variants
+        text = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<thinking>.*?</thinking>\s*', '', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Clean up any remaining standalone tags
+        text = re.sub(r'</?think(?:ing)?>\s*', '', text, flags=re.IGNORECASE)
+        
+        return text.strip()
     
     async def ping(self) -> ProviderStatus:
         """
@@ -122,12 +183,17 @@ class LMStudioProvider:
         model_to_use = model or self.default_model
         logger.debug(f"Using model: {model_to_use} (requested: {model}, default: {self.default_model})")
         
+        # Disable thinking for Qwen3 models using both API param and message directive
+        modified_messages = self._disable_thinking_in_messages(messages)
+        
         payload = {
             "model": model_to_use,
-            "messages": messages,
+            "messages": modified_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stream": False
+            "stream": False,
+            # Qwen3-specific parameter to disable thinking mode
+            "enable_thinking": False,
         }
         
         if stop:
@@ -144,9 +210,12 @@ class LMStudioProvider:
                 data = response.json()
                 
                 # Extract response
-                text = data["choices"][0]["message"]["content"]
+                raw_text = data["choices"][0]["message"]["content"]
                 usage = data.get("usage", {})
                 response_model = data.get("model", model_to_use)
+                
+                # Strip thinking blocks as final safety net
+                text = self._strip_thinking_blocks(raw_text)
                 
                 logger.info(f"LM Studio generate success (model: {response_model}, tokens: {usage.get('total_tokens', 'unknown')})")
                 
@@ -213,12 +282,17 @@ class LMStudioProvider:
         model_to_use = model or self.default_model
         logger.debug(f"Streaming with model: {model_to_use} (requested: {model}, default: {self.default_model})")
         
+        # Disable thinking for Qwen3 models using both API param and message directive
+        modified_messages = self._disable_thinking_in_messages(messages)
+        
         payload = {
             "model": model_to_use,
-            "messages": messages,
+            "messages": modified_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stream": True
+            "stream": True,
+            # Qwen3-specific parameter to disable thinking mode
+            "enable_thinking": False,
         }
         
         if stop:
@@ -233,6 +307,8 @@ class LMStudioProvider:
                 response.raise_for_status()
                 
                 index = 0
+                in_thinking_block = False
+                accumulated_buffer = ""
                 
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -267,9 +343,30 @@ class LMStudioProvider:
                                     break
                                 continue
                             
-                            # Emit raw token without filtering
-                            yield TokenChunk(token=token, index=index, is_end=False)
-                            index += 1
+                            # Filter thinking blocks from streamed content
+                            accumulated_buffer += token
+                            
+                            # Check if we're entering a thinking block
+                            if "<think>" in accumulated_buffer.lower() or "<thinking>" in accumulated_buffer.lower():
+                                in_thinking_block = True
+                                accumulated_buffer = ""
+                                continue
+                            
+                            # Check if we're exiting a thinking block
+                            if in_thinking_block:
+                                if "</think>" in accumulated_buffer.lower() or "</thinking>" in accumulated_buffer.lower():
+                                    in_thinking_block = False
+                                    accumulated_buffer = ""
+                                continue
+                            
+                            # Only emit tokens outside thinking blocks
+                            if not in_thinking_block and accumulated_buffer:
+                                # Clean any potential tag fragments
+                                clean_token = accumulated_buffer
+                                if not ("<" in clean_token and "think" in clean_token.lower()):
+                                    yield TokenChunk(token=clean_token, index=index, is_end=False)
+                                    index += 1
+                                accumulated_buffer = ""
                             
                             # Check if this is the last chunk
                             finish_reason = data["choices"][0].get("finish_reason")

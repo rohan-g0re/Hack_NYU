@@ -10,6 +10,7 @@ from typing import List
 from ..llm.types import ChatMessage
 from ..models.agent import BuyerConstraints, Seller, SellerProfile
 from ..models.message import Message
+from ..utils.history_truncation import truncate_conversation_history
 
 
 def render_buyer_prompt(
@@ -50,11 +51,17 @@ Important Instructions:
 - You can only see messages addressed to you or public messages
 - Sellers' private information (costs, minimum prices) is hidden from you"""
     
-    # Build conversation context
+    # Build conversation context with intelligent truncation
     history_text = ""
     if conversation_history:
+        # Truncate history to prevent context overflow (max 10 messages, 4000 chars)
+        truncated_history = truncate_conversation_history(
+            conversation_history,
+            max_messages=10,
+            max_chars=4000
+        )
         history_text = "\n\nRecent conversation:\n"
-        for msg in conversation_history[-10:]:  # Last 10 messages
+        for msg in truncated_history:
             visibility_note = ""
             if msg.get("sender_type") == "seller" and msg.get("sender_id") not in msg.get("visibility", []):
                 visibility_note = " [Private - not visible to you]"
@@ -137,14 +144,24 @@ If you want to make a specific offer, include a JSON block at the end:
 ```
 The offer will be automatically parsed. Price must be between ${inventory_item.least_price:.2f} and ${inventory_item.selling_price:.2f}."""
     
-    # Build filtered conversation context (seller sees more than buyer)
+    # Build filtered conversation context with intelligent truncation
+    # Seller sees only buyer messages (filtered by visibility_filter)
     history_text = ""
     if conversation_history:
+        # Truncate history to prevent context overflow (max 10 messages, 4000 chars)
+        truncated_history = truncate_conversation_history(
+            conversation_history,
+            max_messages=10,
+            max_chars=4000
+        )
         history_text = "\n\nConversation history:\n"
-        for msg in conversation_history[-10:]:
+        for msg in truncated_history:
             history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
     
     user_prompt = f"""The buyer {buyer_name} is negotiating for {constraints.item_name}.{history_text}
+
+IMPORTANT: Do NOT repeat or echo the conversation history above. Generate YOUR OWN response as {seller.name}.
+Do NOT copy the buyer's message or other sellers' messages. Write a fresh response based on the context.
 
 Respond with your message. You can make an offer by including the JSON block format shown above."""
     
@@ -216,11 +233,17 @@ Important:
 
 Be decisive but thoughtful."""
 
-    # Add recent conversation context
+    # Add recent conversation context with intelligent truncation
     history_text = ""
     if conversation_history:
+        # Truncate history for decision context (max 5 messages, 2000 chars)
+        truncated_history = truncate_conversation_history(
+            conversation_history,
+            max_messages=5,
+            max_chars=2000
+        )
         history_text = "\n\nRecent conversation:\n"
-        for msg in conversation_history[-5:]:  # Last 5 messages for decision context
+        for msg in truncated_history:
             history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
 
     user_prompt = f"""You are at round {current_round}.{history_text}
