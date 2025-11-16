@@ -1,65 +1,93 @@
 """
 Database utilities and connection management.
 
-WHAT: SQLite database setup and health checks
-WHY: Store negotiation state, agent data, session history
-HOW: SQLAlchemy async engine with health check method
+WHAT: SQLite database setup with sync SQLAlchemy
+WHY: Store negotiation state, agent data, session history with WAL mode for concurrency
+HOW: Sync SQLAlchemy engine with WAL pragma and session management
 """
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
+from contextlib import contextmanager
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.pool import StaticPool
 
 from .config import settings
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Convert sqlite:/// to sqlite+aiosqlite:///
-DATABASE_URL = settings.DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
-
-# Create async engine
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=settings.DEBUG,
-    future=True
-)
-
-# Session factory
-async_session_maker = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
 # Base for models
 Base = declarative_base()
 
+# Create sync engine with proper SQLite configuration
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,  # Use StaticPool for SQLite to avoid threading issues
+    echo=settings.DEBUG
+)
 
-async def get_db():
+
+# Enable WAL mode for better concurrency
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
     """
-    Dependency for FastAPI endpoints to get database session.
+    Set SQLite pragmas on connection.
+    
+    WHAT: Enable WAL mode and optimize SQLite settings
+    WHY: Better concurrency and performance
+    HOW: Execute PRAGMA statements on each connection
+    """
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+    logger.debug("SQLite pragmas set: WAL mode enabled, foreign keys ON")
+
+
+# Session factory
+SessionLocal = sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
+)
+
+
+@contextmanager
+def get_db():
+    """
+    Context manager for database sessions.
+    
+    WHAT: Provide database session with automatic cleanup
+    WHY: Ensure sessions are properly closed
+    HOW: Context manager pattern with try/finally
     
     Yields:
-        AsyncSession
+        Session: SQLAlchemy session
     """
-    async with async_session_maker() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 async def ping_database() -> dict:
     """
     Check database connectivity.
     
+    WHAT: Test database connection
+    WHY: Health check endpoint needs to verify DB availability
+    HOW: Execute simple query and catch exceptions
+    
     Returns:
         Dict with status and info
     """
     try:
-        async with engine.connect() as conn:
-            result = await conn.execute(text("SELECT 1"))
+        with get_db() as session:
+            result = session.execute(text("SELECT 1"))
             result.fetchone()
         
         return {
@@ -76,15 +104,26 @@ async def ping_database() -> dict:
         }
 
 
-async def init_db():
-    """Initialize database tables."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database initialized")
+def init_db():
+    """
+    Initialize database tables.
+    
+    WHAT: Create all tables defined in models
+    WHY: Setup database schema on first run
+    HOW: Call create_all on metadata
+    """
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database initialized successfully")
 
 
-async def close_db():
-    """Close database connections."""
-    await engine.dispose()
+def close_db():
+    """
+    Close database connections.
+    
+    WHAT: Dispose of connection pool
+    WHY: Clean shutdown
+    HOW: Call engine.dispose()
+    """
+    engine.dispose()
     logger.info("Database connections closed")
 

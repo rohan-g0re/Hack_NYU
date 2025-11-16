@@ -29,7 +29,7 @@ class SellerAgent:
         inventory_item: InventoryItem,
         *,
         temperature: float = 0.0,
-        max_tokens: int = 192
+        max_tokens: int = 256
     ):
         """
         Initialize seller agent.
@@ -77,7 +77,7 @@ class SellerAgent:
         )
         
         try:
-            # Generate response
+            # Generate response (sanitization handles thinking removal)
             result = await self.provider.generate(
                 messages=messages,
                 temperature=self.temperature,
@@ -115,14 +115,43 @@ class SellerAgent:
     
     def _sanitize_message(self, text: str) -> str:
         """
-        Sanitize LLM output, removing JSON blocks.
+        Sanitize LLM output, removing JSON blocks and thinking tags.
         
-        WHAT: Clean message text, remove offer JSON
+        WHAT: Clean message text, remove offer JSON and internal reasoning
         WHY: Keep only the conversational message
-        HOW: Remove JSON blocks, normalize whitespace
+        HOW: Remove JSON blocks, thinking tags, normalize whitespace
         """
         if not text:
             return ""
+        
+        # Remove thinking tags and their content
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove sentence continuation patterns (Bug #3 fix)
+        # Detect if message starts with lowercase or ellipsis (likely continuation)
+        continuation_patterns = [
+            r'^\.\.\.+\s*',  # Starting with ellipsis
+            r'^\.\s+',  # Starting with period
+            r'^,\s+',  # Starting with comma
+            r'^and\s+',  # Starting with "and"
+            r'^but\s+',  # Starting with "but"
+            r'^or\s+',  # Starting with "or"
+            r'^so\s+',  # Starting with "so" (when used as connector)
+        ]
+        
+        for pattern in continuation_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Remove meta-commentary patterns
+        meta_patterns = [
+            r'^Okay,?\s*let\'?s?\s*see\.?\s*',  # "Okay, let's see"
+            r'^Let me think\.?\s*',  # "Let me think"
+            r'^I should\s+.*?\.?\s*',  # "I should..."
+        ]
+        
+        for pattern in meta_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
         
         # Remove JSON code blocks
         text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)

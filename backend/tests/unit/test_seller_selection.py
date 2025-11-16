@@ -199,7 +199,7 @@ def test_validate_seller_inventory_valid_seller():
     
     can_participate, reason = validate_seller_inventory(
         seller=seller,
-        item_id="item1",
+        item_name="Widget",
         quantity_needed=5,
         max_price=20.0
     )
@@ -230,7 +230,7 @@ def test_validate_seller_inventory_no_item():
     
     can_participate, reason = validate_seller_inventory(
         seller=seller,
-        item_id="item1",
+        item_name="Widget",
         quantity_needed=5,
         max_price=20.0
     )
@@ -261,7 +261,7 @@ def test_validate_seller_inventory_insufficient_quantity():
     
     can_participate, reason = validate_seller_inventory(
         seller=seller,
-        item_id="item1",
+        item_name="Widget",
         quantity_needed=5,
         max_price=20.0
     )
@@ -292,7 +292,7 @@ def test_validate_seller_inventory_price_too_high():
     
     can_participate, reason = validate_seller_inventory(
         seller=seller,
-        item_id="item1",
+        item_name="Widget",
         quantity_needed=5,
         max_price=20.0
     )

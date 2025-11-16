@@ -32,14 +32,14 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    await init_db()
+    init_db()
     logger.info("Application startup complete")
     
     yield
     
     # Shutdown
     logger.info("Shutting down application")
-    await close_db()
+    close_db()
     logger.info("Application shutdown complete")
 
 
@@ -50,16 +50,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware FIRST - wraps everything including error responses
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Register exception handlers
+# Register exception handlers AFTER CORS middleware
 register_exception_handlers(app)
 
 # Include API router

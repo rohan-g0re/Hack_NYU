@@ -42,7 +42,9 @@ class NegotiationGraph:
         self.provider = provider
         self.max_rounds = settings.MAX_NEGOTIATION_ROUNDS
         self.parallel_limit = settings.PARALLEL_SELLER_LIMIT
-        self.temperature = settings.LLM_DEFAULT_TEMPERATURE
+        # Use slightly higher temperature (0.15) to prevent deterministic pattern completion
+        # This adds randomness while maintaining consistency
+        self.temperature = max(0.15, settings.LLM_DEFAULT_TEMPERATURE)
         self.max_tokens = settings.LLM_DEFAULT_MAX_TOKENS
     
     async def run(
@@ -114,12 +116,19 @@ class NegotiationGraph:
                 # Emit seller responses
                 for seller_id, result in seller_results.items():
                     if result:
+                        # Get seller name
+                        seller_name = next(
+                            (s.name for s in room_state.sellers if s.seller_id == seller_id),
+                            "Unknown Seller"
+                        )
+                        
                         yield {
                             "type": "seller_response",
                             "data": {
                                 "seller_id": seller_id,
+                                "seller_name": seller_name,
                                 "message": result["message"],
-                                "offer": result.get("offer"),
+                                "updated_offer": result.get("offer"),  # Frontend expects "updated_offer"
                                 "round": room_state.current_round
                             },
                             "timestamp": datetime.now()
@@ -128,35 +137,62 @@ class NegotiationGraph:
                 # Node 4: Decision Check (analyze offers)
                 decision_check = self._decision_check_node(room_state, seller_results)
                 
-                # Force decision at last round if any valid offers exist
+                # Determine if buyer should make a decision
+                # Smart decision logic: decide early if exceptional offer, otherwise wait until final round
                 is_last_round = room_state.current_round >= self.max_rounds
-                should_decide = decision_check and decision_check.get("valid_offers")
+                should_decide_early = self._should_make_decision(room_state, decision_check)
                 
-                if should_decide:
+                if is_last_round or should_decide_early:
                     # Node 5: Buyer Decision (LLM-based selection)
-                    valid_offers = decision_check["valid_offers"]
-                    buyer_decision = await self._buyer_decision_node(room_state, valid_offers)
+                    # Always make a decision on the last round, even if no valid offers
+                    has_valid_offers = decision_check and decision_check.get("valid_offers")
                     
-                    if buyer_decision:
-                        room_state.status = "completed"
-                        room_state.selected_seller_id = buyer_decision["seller_id"]
-                        room_state.final_offer = buyer_decision["offer"]
-                        room_state.decision_reason = buyer_decision.get("reason", "Best offer selected")
+                    if has_valid_offers:
+                        valid_offers = decision_check["valid_offers"]
+                        buyer_decision = await self._buyer_decision_node(room_state, valid_offers)
                         
-                        yield {
-                            "type": "negotiation_complete",
-                            "data": {
-                                "selected_seller_id": buyer_decision["seller_id"],
-                                "final_offer": buyer_decision["offer"],
-                                "reason": buyer_decision.get("reason"),
-                                "rounds": room_state.current_round
-                            },
-                            "timestamp": datetime.now()
-                        }
-                        break
-                elif is_last_round:
-                    # Reached max rounds but no valid offers - log this case
+                        if buyer_decision:
+                            room_state.status = "completed"
+                            room_state.selected_seller_id = buyer_decision["seller_id"]
+                            room_state.final_offer = buyer_decision["offer"]
+                            room_state.decision_reason = buyer_decision.get("reason", "Best offer selected")
+                            
+                            # Get seller name
+                            seller_name = next(
+                                (s.name for s in room_state.sellers if s.seller_id == buyer_decision["seller_id"]),
+                                "Unknown Seller"
+                            )
+                            
+                            yield {
+                                "type": "negotiation_complete",
+                                "data": {
+                                    "selected_seller": buyer_decision["seller_id"],  # Frontend expects "selected_seller"
+                                    "seller_name": seller_name,
+                                    "final_price": buyer_decision["offer"].get("price"),
+                                    "quantity": buyer_decision["offer"].get("quantity"),
+                                    "reason": buyer_decision.get("reason"),
+                                    "rounds": room_state.current_round
+                                },
+                                "timestamp": datetime.now()
+                            }
+                            break
+                    
+                    # No valid offers on final round - still complete negotiation
                     logger.warning(f"Max rounds reached ({self.max_rounds}) with no valid offers")
+                    room_state.status = "aborted"
+                    yield {
+                        "type": "negotiation_complete",
+                        "data": {
+                            "selected_seller": None,  # Frontend expects "selected_seller"
+                            "seller_name": None,
+                            "final_price": None,
+                            "quantity": None,
+                            "reason": "No valid offers received after maximum negotiation rounds",
+                            "rounds": room_state.current_round
+                        },
+                        "timestamp": datetime.now()
+                    }
+                    break
                 
                 # Emit heartbeat
                 yield {
@@ -165,15 +201,19 @@ class NegotiationGraph:
                     "timestamp": datetime.now()
                 }
             
-            # Max rounds reached
-            if room_state.current_round >= self.max_rounds and room_state.status != "completed":
+            # This should not be reached as decision is always made on last round
+            # Kept as safety fallback
+            if room_state.status != "completed" and room_state.status != "aborted":
+                logger.error("Negotiation ended unexpectedly without decision or abort")
                 room_state.status = "aborted"
                 yield {
                     "type": "negotiation_complete",
                     "data": {
-                        "selected_seller_id": None,
-                        "final_offer": None,
-                        "reason": "Max rounds reached",
+                        "selected_seller": None,  # Frontend expects "selected_seller"
+                        "seller_name": None,
+                        "final_price": None,
+                        "quantity": None,
+                        "reason": "Negotiation ended unexpectedly",
                         "rounds": room_state.current_round
                     },
                     "timestamp": datetime.now()
@@ -269,15 +309,16 @@ class NegotiationGraph:
             """Get response from a single seller."""
             async with semaphore:
                 try:
-                    # Find matching inventory item
+                    # Find matching inventory item by name (case-insensitive)
                     inventory_item = None
+                    item_name_lower = room_state.buyer_constraints.item_name.lower().strip()
                     for item in seller.inventory:
-                        if item.item_id == room_state.buyer_constraints.item_id:
+                        if item.item_name.lower().strip() == item_name_lower:
                             inventory_item = item
                             break
                     
                     if not inventory_item:
-                        logger.warning(f"Seller {seller.name} has no inventory for item")
+                        logger.warning(f"Seller {seller.name} has no inventory for item {room_state.buyer_constraints.item_name}")
                         return None
                     
                     seller_agent = SellerAgent(
@@ -434,7 +475,8 @@ class NegotiationGraph:
             result = await self.provider.generate(
                 messages=decision_prompt,
                 temperature=0.0,  # Deterministic
-                max_tokens=128
+                max_tokens=128,
+                stop=None
             )
             
             # Parse decision from response
@@ -482,6 +524,62 @@ class NegotiationGraph:
                     "reason": generate_decision_reason(best_analysis)
                 }
             return None
+    
+    def _should_make_decision(
+        self,
+        room_state: NegotiationRoomState,
+        decision_check: Optional[dict]
+    ) -> bool:
+        """
+        Determine if buyer should make an early decision.
+        
+        WHAT: Smart logic to decide before final round if conditions are right
+        WHY: Allow buyer to accept exceptional offers early
+        HOW: Check minimum rounds, exceptional offer scores, or multiple good offers
+        
+        Args:
+            room_state: Current negotiation state
+            decision_check: Result from decision_check_node with valid_offers
+            
+        Returns:
+            True if buyer should make decision now, False to continue negotiating
+        """
+        # Must have at least completed minimum rounds (allow negotiation)
+        MIN_ROUNDS = 3
+        if room_state.current_round < MIN_ROUNDS:
+            return False
+        
+        # No valid offers yet - continue negotiating
+        if not decision_check or not decision_check.get("valid_offers"):
+            return False
+        
+        valid_offers = decision_check["valid_offers"]
+        
+        # Check for exceptional offer (score > 85/100)
+        EXCEPTIONAL_SCORE_THRESHOLD = 85.0
+        best_score = max(offer.total_score for offer in valid_offers)
+        
+        if best_score >= EXCEPTIONAL_SCORE_THRESHOLD:
+            logger.info(
+                f"Early decision triggered: exceptional offer with score {best_score:.1f}/100 "
+                f"at round {room_state.current_round}"
+            )
+            return True
+        
+        # Check for multiple good offers (competitive marketplace)
+        # If we have 2+ offers with score > 70, buyer can choose
+        GOOD_SCORE_THRESHOLD = 70.0
+        good_offers = [o for o in valid_offers if o.total_score >= GOOD_SCORE_THRESHOLD]
+        
+        if len(good_offers) >= 2 and room_state.current_round >= 5:
+            logger.info(
+                f"Early decision triggered: {len(good_offers)} competitive offers "
+                f"at round {room_state.current_round}"
+            )
+            return True
+        
+        # Otherwise, continue negotiating
+        return False
     
     def _parse_decision(self, text: str, valid_offers: list) -> Optional[str]:
         """

@@ -77,10 +77,27 @@ def analyze_offers(
         price = offer.get("price", 0)
         quantity = offer.get("quantity", 0)
         
-        # Validate offer is within buyer constraints
-        if not (buyer_constraints.min_price_per_unit <= price <= buyer_constraints.max_price_per_unit):
-            logger.debug(f"Offer from {seller.name} outside price range: ${price}")
+        # Validate offer is within buyer constraints (with 10% flexibility on max price)
+        # Allow buyer to stretch budget slightly for good offers
+        max_price_flexible = buyer_constraints.max_price_per_unit * 1.1
+        
+        if price < buyer_constraints.min_price_per_unit:
+            logger.debug(f"Offer from {seller.name} below minimum price: ${price}")
             continue
+            
+        if price > max_price_flexible:
+            logger.debug(
+                f"Offer from {seller.name} above flexible price limit: ${price} "
+                f"(max: ${buyer_constraints.max_price_per_unit}, flexible: ${max_price_flexible:.2f})"
+            )
+            continue
+        
+        # Log if using flexible pricing
+        if price > buyer_constraints.max_price_per_unit:
+            logger.info(
+                f"Accepting offer from {seller.name} with flexible pricing: ${price:.2f} "
+                f"(+{((price/buyer_constraints.max_price_per_unit - 1) * 100):.1f}% over budget)"
+            )
             
         if quantity < buyer_constraints.quantity_needed:
             logger.debug(f"Offer from {seller.name} insufficient quantity: {quantity}")
@@ -176,9 +193,11 @@ def select_best_offer(
         return None
     
     # Filter to valid offers only (redundant check but safe)
+    # Apply same 10% flexibility on max price
+    max_price_flexible = buyer_constraints.max_price_per_unit * 1.1
     valid_analyses = [
         a for a in analyses
-        if (buyer_constraints.min_price_per_unit <= a.offer["price"] <= buyer_constraints.max_price_per_unit
+        if (buyer_constraints.min_price_per_unit <= a.offer["price"] <= max_price_flexible
             and a.offer["quantity"] >= buyer_constraints.quantity_needed)
     ]
     

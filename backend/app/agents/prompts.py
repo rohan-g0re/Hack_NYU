@@ -35,48 +35,44 @@ def render_buyer_prompt(
     total_max_budget = constraints.max_price_per_unit * constraints.quantity_needed
     total_min_budget = constraints.min_price_per_unit * constraints.quantity_needed
     
-    system_prompt = f"""You are {buyer_name}, a strategic buyer negotiating for items in a competitive marketplace.
+    system_prompt = f"""You are {buyer_name} shopping for {constraints.item_name}.
 
-Your Shopping List:
-- Item: {constraints.item_name}
-- Quantity needed: {constraints.quantity_needed}
-- Budget per unit: ${constraints.min_price_per_unit:.2f} - ${constraints.max_price_per_unit:.2f}
-- Total budget range: ${total_min_budget:.2f} - ${total_max_budget:.2f}
-
-Negotiation Strategy:
-1. START LOW: Initial requests should target prices near your minimum budget
-2. COMPARE SELLERS: Get offers from multiple sellers before deciding
-3. COUNTER-OFFER: If price too high, make specific counter-offer with price
-4. LEVERAGE COMPETITION: Mention other sellers' prices to encourage better deals
-5. BE PATIENT: Don't accept first offer unless it's exceptional (close to minimum)
-6. TRACK OFFERS: Remember who offered what and use it in negotiation
+NEED: {constraints.quantity_needed} units
+BUDGET: ${constraints.min_price_per_unit:.2f}-${constraints.max_price_per_unit:.2f} per unit
 
 {offers_table}
 
-Your Tactics:
-- Ask sellers to beat each other's prices: "Can you beat @OtherSeller's offer?"
-- Show budget constraints: "That's above my ${constraints.max_price_per_unit:.2f} limit"
-- Create urgency: "I need to decide soon, what's your best offer?"
-- Be polite but firm: "I appreciate the offer, but I need a better price"
+SELLERS: {", ".join(seller_names)}
+Use @Name to address sellers (e.g., @{seller_names[0]})
 
-Available Sellers: {", ".join(seller_names)}
-Mention format: @SellerName (e.g., {seller_mentions})
+CRITICAL RULES:
+- You ARE the buyer. Start your own complete thoughts.
+- NEVER continue or complete someone else's sentence.
+- Write COMPLETE, STANDALONE messages that make sense on their own.
+- NO thinking out loud. NO narrating. NO meta-commentary.
+- Ask prices, compare offers, negotiate, decide.
+- Keep under 60 words.
 
-Remember: You can only see messages addressed to you. Sellers' costs and minimum prices are hidden."""
+EXAMPLES:
+Good: "Hey @{seller_names[0]}! Need {constraints.quantity_needed} {constraints.item_name}. Best price?"
+Good: "@{seller_names[0]}, that's too high. Can you do $X?"
+Bad: "Okay let's see..." or "I need to..." or "The user wants..."
+Bad: "...and what about delivery?" (incomplete continuation)
+"""
     
     # Build conversation context
     history_text = ""
     if conversation_history:
         history_text = "\n\nRecent conversation:\n"
-        for msg in conversation_history[-10:]:  # Last 10 messages
+        for msg in conversation_history[-6:]:  # Last 6 messages (reduced to prevent context bleeding)
             visibility_note = ""
             if msg.get("sender_type") == "seller" and msg.get("sender_id") not in msg.get("visibility", []):
                 visibility_note = " [Private - not visible to you]"
             history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}{visibility_note}\n"
     
-    user_prompt = f"""You are negotiating for {constraints.item_name}.{history_text}
+    user_prompt = f"""Continue negotiating.{history_text}
 
-Respond with your next message. Be concise (under 100 words). Use @SellerName to address specific sellers."""
+Your message (under 60 words):"""
     
     return [
         {"role": "system", "content": system_prompt},
@@ -149,15 +145,16 @@ def render_seller_prompt(
     WHY: Seller needs to compete effectively in marketplace
     HOW: Enhanced prompt with profit calculations, competition awareness, strategy
     """
-    # Find matching inventory item
+    # Find matching inventory item by name (case-insensitive)
     inventory_item = None
+    item_name_lower = constraints.item_name.lower().strip()
     for item in seller.inventory:
-        if item.item_id == constraints.item_id:
+        if item.item_name.lower().strip() == item_name_lower:
             inventory_item = item
             break
     
     if not inventory_item:
-        raise ValueError(f"Seller {seller.name} does not have item {constraints.item_id}")
+        raise ValueError(f"Seller {seller.name} does not have item '{constraints.item_name}'")
     
     # Calculate profit margins
     profit_at_floor = inventory_item.least_price - inventory_item.cost_price
@@ -168,62 +165,111 @@ def render_seller_prompt(
     # Build pricing strategy
     pricing_strategy = _render_pricing_strategy(seller.profile, inventory_item)
     
-    # Build style instruction
-    if seller.profile.speaking_style == "rude":
-        style_instruction = "Be direct, slightly aggressive, and don't be overly polite. Use short, blunt responses."
-    else:  # very_sweet
-        style_instruction = "Be very friendly, warm, and enthusiastic. Use positive language and show genuine interest in helping the buyer."
+    # Determine conversation stage and strategy
+    message_count = len([m for m in conversation_history if m.get('sender_id') == seller.seller_id])
+    is_first_contact = message_count == 0
+    has_made_offer = any(m.get('sender_id') == seller.seller_id and m.get('offer') for m in conversation_history)
     
-    system_prompt = f"""You are {seller.name}, a seller in a COMPETITIVE marketplace negotiating with {buyer_name}.
+    # Build style instruction with more detail
+    if seller.profile.speaking_style == "rude":
+        style_instruction = """SPEAKING STYLE - Direct & Blunt:
+- No pleasantries, get straight to business
+- Use short, punchy sentences
+- Be confident and assertive
+- Show you're busy and this is business
+Example: "Yeah, I got it. $95/unit, 15 available. Other buyers waiting. Interested or not?"
+"""
+        example_message = 'DO: "Hey! Rough day? I got 15 units, decent quality. What\'s your budget looking like?"'
+    else:  # very_sweet
+        style_instruction = """SPEAKING STYLE - Friendly & Warm:
+- Be personable and build rapport
+- Use enthusiastic, positive language
+- Show genuine interest in helping
+- Make the buyer feel valued
+Example: "Hey there! Great choice on the laptop! I'd love to help you out. I have excellent quality units in stock. What's your target price?"
+"""
+        example_message = 'DO: "Hi there! I\'m so glad you reached out! I have some beautiful units in stock. Tell me more about what you need!"'
+    
+    # Build negotiation strategy based on stage
+    if is_first_contact:
+        negotiation_stage = """FIRST CONTACT STRATEGY:
+- Start with a greeting and acknowledge their needs
+- Ask clarifying questions about their requirements
+- Highlight your product quality/availability
+- DON'T make an offer yet - build rapport first
+- Set the stage for negotiation
+"""
+    elif not has_made_offer:
+        negotiation_stage = """NEGOTIATION STRATEGY - Pre-Offer:
+- Reference previous conversation
+- Address any questions they asked
+- Emphasize value proposition (quality, reliability, stock)
+- Gauge their interest and urgency
+- Consider making an initial offer if they seem ready
+"""
+    else:
+        negotiation_stage = """NEGOTIATION STRATEGY - Active Deal:
+- Reference your previous offer
+- Counter their objections or requests
+- Adjust pricing strategically if needed
+- Create urgency (limited stock, other buyers)
+- Try to close the deal
+"""
+    
+    system_prompt = f"""You are {seller.name}, an experienced seller of {inventory_item.item_name}.
 
-⚠️ IMPORTANT: Other sellers are competing for this buyer. You must be competitive to win!
+INVENTORY: {inventory_item.item_name}
+Price range: ${inventory_item.least_price:.2f} (floor) to ${inventory_item.selling_price:.2f} (list)
+Available stock: {inventory_item.quantity_available} units
+Cost basis: ${inventory_item.cost_price:.2f}/unit
 
-Your Inventory:
-- Item: {inventory_item.item_name}
-- Your cost: ${inventory_item.cost_price:.2f} per unit
-- List price: ${inventory_item.selling_price:.2f} per unit (margin: {margin_at_list:.1f}%)
-- Floor price: ${inventory_item.least_price:.2f} per unit (ABSOLUTE MINIMUM, margin: {margin_at_floor:.1f}%)
-- Profit at floor: ${profit_at_floor:.2f} per unit
-- Profit at list: ${profit_at_list:.2f} per unit
-- Stock available: {inventory_item.quantity_available} units
+{style_instruction}
 
-Pricing Strategy ({seller.profile.priority}):
+BUSINESS GOAL: {"Win the customer - prioritize deal over maximum profit" if seller.profile.priority == "customer_retention" else "Maximize profit - defend margins aggressively"}
+
+BUYER INFO: {buyer_name} needs {constraints.quantity_needed} units
+
+{negotiation_stage}
+
+CONVERSATION RULES:
+- Speak naturally as yourself (first person)
+- Write COMPLETE, STANDALONE messages that make sense on their own
+- NEVER continue or complete someone else's sentence
+- NO meta-commentary like "Okay let me think..." or "I should..."
+- Start your own thoughts - don't finish others' sentences
+- Be conversational but strategic
+- Keep responses under 80 words
+- Compete with other sellers in the room
+
+MAKING OFFERS:
+- Only include an offer when strategically appropriate
+- Format: End your message with {{"offer": {{"price": PRICE, "quantity": QUANTITY}}}}
+- Price MUST be between ${inventory_item.least_price:.2f} and ${inventory_item.selling_price:.2f}
+- Quantity MUST be between 1 and {inventory_item.quantity_available}
+
+PRICING STRATEGY:
 {pricing_strategy}
 
-Communication Style: {style_instruction}
-
-Competitive Tactics:
-- Track buyer's budget signals from their messages
-- Make strong opening offers to beat competitors
-- Be willing to negotiate but protect your profit margin
-- Watch for buyer mentioning other sellers - that means competition!
-- If buyer has better offer elsewhere, decide: match it or let them go
-- Early offers win deals - don't wait too long
-
-Market Intelligence:
-- Buyer's stated budget: ${constraints.min_price_per_unit:.2f} - ${constraints.max_price_per_unit:.2f} per unit
-- Your overlap zone: ${max(inventory_item.least_price, constraints.min_price_per_unit):.2f} - ${min(inventory_item.selling_price, constraints.max_price_per_unit):.2f}
-- Quantity they need: {constraints.quantity_needed} units (you have {inventory_item.quantity_available})
-
-Making Offers:
-To make an offer, end your message with this JSON format:
-```json
-{{"offer": {{"price": <price_per_unit>, "quantity": <quantity>}}}}
-```
-STRICT LIMITS: Price MUST be ${inventory_item.least_price:.2f} - ${inventory_item.selling_price:.2f}, Quantity MUST be 1 - {inventory_item.quantity_available}
-
-Be concise (under 80 words). Make offers strategically based on your pricing strategy."""
+EXAMPLES:
+{example_message}
+DON'T: "Okay, the buyer wants..." or "Let me think about this..."
+"""
     
     # Build filtered conversation context (seller sees more than buyer)
     history_text = ""
     if conversation_history:
-        history_text = "\n\nConversation history:\n"
-        for msg in conversation_history[-10:]:
-            history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
+        history_text = "\n\nRECENT CONVERSATION:\n"
+        for msg in conversation_history[-6:]:  # Limit to last 6 messages (reduced to prevent context bleeding)
+            sender = msg.get('sender_name', 'Unknown')
+            content = msg.get('content', '')
+            offer_info = ""
+            if msg.get('offer'):
+                offer_info = f" [Offered: ${msg['offer'].get('price', 0):.2f} x {msg['offer'].get('quantity', 0)} units]"
+            history_text += f"{sender}: {content}{offer_info}\n"
     
-    user_prompt = f"""The buyer {buyer_name} is negotiating for {constraints.item_name}.{history_text}
+    user_prompt = f"""{history_text}
 
-Respond with your message. Include an offer using the JSON format if appropriate."""
+Your response (natural conversation, under 80 words):"""
     
     return [
         {"role": "system", "content": system_prompt},
@@ -313,47 +359,24 @@ def render_buyer_decision_prompt(
     table_lines.append("=" * 80)
     offers_table = "\n".join(table_lines)
     
-    # Build scoring explanation
-    scoring_explanation = """
-Scoring Breakdown:
-- Price Score (40%): Lower price within your budget = higher score
-- Responsiveness (30%): Earlier offers = higher score
-- Negotiation Rounds (20%): Fewer rounds = higher score
-- Seller Profile (10%): Customer retention sellers get bonus
-"""
-    
-    system_prompt = f"""You are {buyer_name}, making your final decision on which seller to buy from.
+    system_prompt = f"""You are {buyer_name}. Choose which seller to buy from.
 
-Your Budget: ${constraints.min_price_per_unit:.2f} - ${constraints.max_price_per_unit:.2f} per unit
-Quantity Needed: {constraints.quantity_needed} units
+BUDGET: ${constraints.min_price_per_unit:.2f}-${constraints.max_price_per_unit:.2f}/unit
+NEED: {constraints.quantity_needed} units
 
 {offers_table}
 
-{scoring_explanation}
+RULES:
+- Pick the best offer (price, responsiveness, value)
+- State decision: "DECISION: @SellerName"
+- Keep under 30 words
 
-Your Task:
-Review the offers above and select the best one. Consider:
-1. Price (most important - stay within budget)
-2. Total cost
-3. Seller reliability/responsiveness
-4. Overall score
-
-You must respond with your decision in this EXACT format:
-DECISION: @SellerName
-
-Example: "DECISION: @Alice" or "After review, DECISION: @Bob"
-
-Choose the seller that provides the best overall value."""
+Example: "DECISION: @Alice - best price!"
+"""
     
-    # Brief conversation summary
-    offer_count = len([msg for msg in conversation_history if msg.get("offer")])
-    round_count = max((msg.get("turn_number", 0) for msg in conversation_history), default=0)
-    
-    user_prompt = f"""You negotiated with {len(offers)} seller(s) over {round_count} round(s) and received {offer_count} offer(s).
+    user_prompt = f"""Choose best offer from {len(offers)} seller(s).
 
-Based on the analysis above, which seller do you choose?
-
-Respond with: DECISION: @SellerName"""
+Your decision:"""
     
     return [
         {"role": "system", "content": system_prompt},

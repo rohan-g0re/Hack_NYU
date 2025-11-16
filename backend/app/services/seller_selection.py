@@ -30,10 +30,10 @@ def select_sellers_for_item(
     
     WHAT: Filter sellers based on inventory availability and price overlap
     WHY: Prevent sellers without matching items from participating
-    HOW: Check item_id match, quantity, and price range
+    HOW: Check item_name match (case-insensitive), quantity, and price range
     
     Selection Criteria:
-    1. Seller has item with matching item_id
+    1. Seller has item with matching item_name (case-insensitive)
     2. Seller has sufficient quantity available
     3. Price ranges overlap (seller's least_price <= buyer's max_price)
     
@@ -50,7 +50,7 @@ def select_sellers_for_item(
     for seller in all_sellers:
         can_participate, skip_reason = validate_seller_inventory(
             seller=seller,
-            item_id=item_constraints.item_id,
+            item_name=item_constraints.item_name,
             quantity_needed=item_constraints.quantity_needed,
             max_price=item_constraints.max_price_per_unit
         )
@@ -75,7 +75,7 @@ def select_sellers_for_item(
 
 def validate_seller_inventory(
     seller: Seller,
-    item_id: str,
+    item_name: str,
     quantity_needed: int,
     max_price: float
 ) -> Tuple[bool, Optional[str]]:
@@ -84,21 +84,23 @@ def validate_seller_inventory(
     
     WHAT: Check if seller meets all requirements
     WHY: Ensure only qualified sellers participate
-    HOW: Validate inventory item exists, quantity sufficient, price compatible
+    HOW: Validate inventory item exists (by name, case-insensitive), quantity sufficient, price compatible
     
     Args:
         seller: Seller to validate
-        item_id: Required item ID
+        item_name: Required item name (case-insensitive matching)
         quantity_needed: Minimum quantity buyer needs
         max_price: Maximum price buyer will pay
         
     Returns:
         Tuple of (can_participate: bool, skip_reason: Optional[str])
     """
-    # Find matching inventory item
+    # Find matching inventory item by name (case-insensitive)
     matching_item: Optional[InventoryItem] = None
+    item_name_lower = item_name.lower().strip()
+    
     for item in seller.inventory:
-        if item.item_id == item_id:
+        if item.item_name.lower().strip() == item_name_lower:
             matching_item = item
             break
     
@@ -120,23 +122,24 @@ def validate_seller_inventory(
     return True, None
 
 
-def get_seller_item(seller: Seller, item_id: str) -> Optional[InventoryItem]:
+def get_seller_item(seller: Seller, item_name: str) -> Optional[InventoryItem]:
     """
-    Get seller's inventory item by item_id.
+    Get seller's inventory item by item_name.
     
     WHAT: Find specific inventory item for seller
     WHY: Helper for retrieving item details
-    HOW: Linear search through seller's inventory
+    HOW: Linear search through seller's inventory (case-insensitive)
     
     Args:
         seller: Seller to search
-        item_id: Item ID to find
+        item_name: Item name to find (case-insensitive)
         
     Returns:
         InventoryItem if found, None otherwise
     """
+    item_name_lower = item_name.lower().strip()
     for item in seller.inventory:
-        if item.item_id == item_id:
+        if item.item_name.lower().strip() == item_name_lower:
             return item
     return None
 

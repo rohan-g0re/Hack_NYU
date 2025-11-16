@@ -71,7 +71,7 @@ class BuyerAgent:
         )
         
         try:
-            # Generate response
+            # Generate response (sanitization handles thinking removal)
             result = await self.provider.generate(
                 messages=messages,
                 temperature=self.temperature,
@@ -108,11 +108,48 @@ class BuyerAgent:
         Sanitize LLM output.
         
         WHAT: Clean and normalize message text
-        WHY: Remove artifacts, normalize whitespace
-        HOW: Trim, collapse whitespace, remove markdown code blocks
+        WHY: Remove artifacts, normalize whitespace, hide internal thinking
+        HOW: Trim, collapse whitespace, remove markdown code blocks and thinking tags
         """
         if not text:
             return ""
+        
+        # Remove thinking tags and their content
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove sentence continuation patterns (Bug #3 fix)
+        # Detect if message starts with lowercase or ellipsis (likely continuation)
+        continuation_patterns = [
+            r'^\.\.\.+\s*',  # Starting with ellipsis
+            r'^\.\s+',  # Starting with period
+            r'^,\s+',  # Starting with comma
+            r'^and\s+',  # Starting with "and"
+            r'^but\s+',  # Starting with "but"
+            r'^or\s+',  # Starting with "or"
+            r'^so\s+',  # Starting with "so" (when used as connector)
+        ]
+        
+        for pattern in continuation_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Remove meta-commentary and thinking patterns (buyer should not narrate)
+        thinking_patterns = [
+            r'^Okay,?\s*let\'?s?\s*see\.?\s*',  # "Okay, let's see"
+            r'^Let\'?s?\s*see\.?\s*',  # "Let's see"
+            r'^The user wants?\s+.*?\.?\s*',  # "The user wants..."
+            r'^The user(?:\'s|s)?\s+.*?\.?\s*',  # "The user's..."
+            r'^I need to\s+.*?\.?\s*',  # "I need to..." (meta)
+            r'^First,?\s*I need to\s+.*?\.?\s*',  # "First, I need to..."
+            r'^Now,?\s*I(?:\'ll| will)\s+.*?\.?\s*',  # "Now, I'll..." (meta)
+            r'^Wait,?\s*the\s+.*?\.?\s*',  # "Wait, the..."
+            r'^So\s+I\s+should\s+.*?\.?\s*',  # "So I should..."
+            r'^They(?:\'ve| have)\s+already\s+.*?\.?\s*',  # "They've already..."
+            r'^Since\s+there\s+are\s+no\s+offers.*?\.?\s*',  # "Since there are no offers..."
+        ]
+        
+        for pattern in thinking_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
         
         # Remove markdown code blocks if present
         text = re.sub(r'```[a-z]*\n?', '', text)
