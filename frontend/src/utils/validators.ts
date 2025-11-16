@@ -25,6 +25,9 @@ export function validatePriceRange(minPrice: number, maxPrice: number): Validati
  * Validate seller inventory item pricing
  */
 export function validateSellerInventory(item: InventoryItem): ValidationError | null {
+  if (!item.item_name || item.item_name.trim() === '') {
+    return { field: 'item_name', message: 'Item name is required' };
+  }
   if (item.cost_price < 0) {
     return { field: 'cost_price', message: 'Cost price cannot be negative' };
   }

@@ -28,13 +28,14 @@ export enum SessionStatus {
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 export const API_VERSION = 'v1';
 export const API_PREFIX = `/api/${API_VERSION}`;
-export const DEFAULT_PROVIDER = (process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || 'openrouter') as 'openrouter' | 'lm_studio';
+export const DEFAULT_PROVIDER = (process.env.NEXT_PUBLIC_DEFAULT_PROVIDER || 'lm_studio') as 'openrouter' | 'lm_studio';
 
 // Configuration Defaults
 export const MAX_SELLERS = 10;
 export const MAX_NEGOTIATION_ROUNDS = 10;
 export const DEFAULT_TEMPERATURE = 0.7;
 export const DEFAULT_MAX_TOKENS = 500;
+export const DEFAULT_MODEL = process.env.NEXT_PUBLIC_DEFAULT_MODEL || 'qwen/qwen3-1.7b';
 
 // SSE Configuration
 export const SSE_HEARTBEAT_INTERVAL = 15000; // 15 seconds

@@ -21,6 +21,7 @@ from ..agents.prompts import render_decision_prompt
 from ..services.message_router import parse_mentions
 from ..services.visibility_filter import filter_conversation
 from ..core.config import settings
+from ..core.session_manager import session_manager
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -95,6 +96,19 @@ class NegotiationGraph:
                 if not buyer_result:
                     break
                 
+                # Emit raw response for debugging
+                yield {
+                    "type": "debug_raw",
+                    "data": {
+                        "agent_type": "buyer",
+                        "agent_name": room_state.buyer_name,
+                        "raw_response": buyer_result.get("raw_response", ""),
+                        "sanitized_message": buyer_result["message"],
+                        "round": room_state.current_round
+                    },
+                    "timestamp": datetime.now()
+                }
+                
                 yield {
                     "type": "buyer_message",
                     "data": {
@@ -106,13 +120,18 @@ class NegotiationGraph:
                 }
                 
                 # Node 2: Message Routing (determine which sellers respond)
+                logger.warning(f"🔵 BUYER MENTIONED SELLERS: {buyer_result['mentioned_sellers']}")
+                logger.warning(f"🔵 ALL SELLERS: {[(s.seller_id, s.name) for s in room_state.sellers]}")
+                
                 responding_sellers = self._message_routing_node(
                     buyer_result["mentioned_sellers"],
                     room_state.sellers
                 )
                 
+                logger.warning(f"🔵 RESPONDING SELLERS: {[(s.seller_id, s.name) for s in responding_sellers]}")
+                
                 if not responding_sellers:
-                    logger.info("No sellers to respond, ending negotiation")
+                    logger.warning("❌ NO SELLERS TO RESPOND, ending negotiation")
                     break
                 
                 # Node 3: Parallel Seller Responses
@@ -122,6 +141,7 @@ class NegotiationGraph:
                 )
                 
                 # Emit seller responses
+                logger.warning(f"🔵 SELLER RESULTS: {seller_results}")
                 for seller_id, result in seller_results.items():
                     if result:
                         # Find seller name
@@ -130,13 +150,61 @@ class NegotiationGraph:
                             "Unknown Seller"
                         )
                         
+                        # Check if this is an error result
+                        if result.get("error"):
+                            # Emit debug event for error
+                            yield {
+                                "type": "debug_raw",
+                                "data": {
+                                    "agent_type": "seller",
+                                    "agent_name": seller_name,
+                                    "raw_response": result.get("raw_response", ""),
+                                    "sanitized_message": result.get("message", ""),
+                                    "round": room_state.current_round
+                                },
+                                "timestamp": datetime.now()
+                            }
+                        else:
+                            # Normal response - emit raw and seller_response events
+                            yield {
+                                "type": "debug_raw",
+                                "data": {
+                                    "agent_type": "seller",
+                                    "agent_name": seller_name,
+                                    "raw_response": result.get("raw_response", ""),
+                                    "sanitized_message": result["message"],
+                                    "round": room_state.current_round
+                                },
+                                "timestamp": datetime.now()
+                            }
+                            
+                            yield {
+                                "type": "seller_response",
+                                "data": {
+                                    "seller_id": seller_id,
+                                    "seller_name": seller_name,
+                                    "message": result["message"],
+                                    "offer": result.get("offer"),
+                                    "round": room_state.current_round
+                                },
+                                "timestamp": datetime.now()
+                            }
+                    else:
+                        # Log when seller returns None
+                        seller_name = next(
+                            (s.name for s in room_state.sellers if s.seller_id == seller_id),
+                            "Unknown Seller"
+                        )
+                        logger.error(f"❌ Seller {seller_name} ({seller_id}) returned None/empty result - no response emitted")
+                        
+                        # Emit debug event to frontend so user can see the issue
                         yield {
-                            "type": "seller_response",
+                            "type": "debug_raw",
                             "data": {
-                                "seller_id": seller_id,
-                                "seller_name": seller_name,
-                                "message": result["message"],
-                                "offer": result.get("offer"),
+                                "agent_type": "seller",
+                                "agent_name": seller_name,
+                                "raw_response": f"ERROR: Seller {seller_name} returned None/empty result. Check backend logs for details.",
+                                "sanitized_message": f"⚠️ Seller {seller_name} did not respond (check backend logs)",
                                 "round": room_state.current_round
                             },
                             "timestamp": datetime.now()
@@ -305,16 +373,26 @@ class NegotiationGraph:
             """Get response from a single seller."""
             async with semaphore:
                 try:
-                    # Find matching inventory item
+                    # Find matching inventory item BY NAME (case-insensitive)
                     inventory_item = None
+                    buyer_item_name = room_state.buyer_constraints.item_name.lower().strip()
                     for item in seller.inventory:
-                        if item.item_id == room_state.buyer_constraints.item_id:
+                        if item.item_name.lower().strip() == buyer_item_name:
                             inventory_item = item
                             break
                     
                     if not inventory_item:
-                        logger.warning(f"Seller {seller.name} has no inventory for item")
-                        return None
+                        logger.error(f"❌ Seller {seller.name} has no inventory matching '{buyer_item_name}'")
+                        logger.error(f"   Buyer wants: '{buyer_item_name}'")
+                        logger.error(f"   Seller {seller.name} inventory: {[(i.item_name.lower().strip(), i.item_name) for i in seller.inventory]}")
+                        logger.error(f"   Seller {seller.name} inventory count: {len(seller.inventory)}")
+                        # Return error dict instead of None so we can emit debug event
+                        return {
+                            "error": "no_inventory_match",
+                            "message": f"⚠️ Seller {seller.name} has no matching inventory",
+                            "raw_response": f"ERROR: Seller {seller.name} has no inventory matching '{buyer_item_name}'. Available: {[i.item_name for i in seller.inventory]}",
+                            "offer": None
+                        }
                     
                     seller_agent = SellerAgent(
                         provider=self.provider,
@@ -343,11 +421,36 @@ class NegotiationGraph:
                         max_rounds=room_state.max_rounds
                     )
                     
+                    logger.warning(f"🟡 Calling seller {seller.name} to respond...")
                     result = await seller_agent.respond(
                         temp_state,
                         room_state.buyer_name,
                         room_state.buyer_constraints
                     )
+                    logger.warning(f"🟡 Seller {seller.name} returned: {result}")
+                    
+                    # Persist seller message to database
+                    if result and result.get("message"):
+                        db_message = session_manager.record_message(
+                            run_id=room_state.room_id,
+                            turn_number=room_state.current_round,
+                            sender_type="seller",
+                            sender_id=seller.seller_id,
+                            sender_name=seller.name,
+                            message_text=result["message"],
+                            mentioned_agents=[]
+                        )
+                        
+                        # Persist offer if present
+                        offer = result.get("offer")
+                        if offer and db_message:
+                            session_manager.record_offer(
+                                message_id=db_message.id,
+                                seller_id=seller.seller_id,
+                                price_per_unit=offer.get("price", 0),
+                                quantity=offer.get("quantity", 0),
+                                conditions=None
+                            )
                     
                     # Record message in history
                     message: Message = {

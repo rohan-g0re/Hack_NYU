@@ -57,7 +57,15 @@ Remember: You can only see messages addressed to you or public messages. Sellers
     
     user_prompt = f"""You are negotiating for {constraints.item_name}.{history_text}
 
-Respond with your next message. Be concise (under 100 words). Mention sellers using @SellerName if you want to address them specifically."""
+CRITICAL: Write ONLY the actual message you want to send. DO NOT write about what you're going to do.
+DO NOT start with "Okay", "Let me", "I need to", "I should", etc.
+DO NOT explain your thinking or strategy.
+Just write the direct message as if you're talking to the sellers right now.
+
+Good example: "@GadgetHub and @CompuWorld, I need 5 mice. My budget is $15-25 per unit. What can you offer?"
+BAD example: "Okay, the user wants me to negotiate for a mouse. Let me check..."
+
+Write your message NOW (under 100 words):"""
     
     return [
         {"role": "system", "content": system_prompt},
@@ -118,7 +126,13 @@ Your Behavior:
 - {priority_instruction}
 - {style_instruction}
 - Be concise (under 80 words)
-- You can see all public messages and messages addressed to you
+- You can ONLY see messages from the buyer and your own messages
+- You CANNOT see other sellers, their messages, or their offers
+
+IMPORTANT VISIBILITY RULES:
+- You DO NOT know about other sellers unless the buyer explicitly mentions them
+- You DO NOT see what other sellers are offering
+- Only respond based on what the buyer says to you directly
 
 Optional Offer Format:
 If you want to make a specific offer, include a JSON block at the end:
@@ -127,16 +141,31 @@ If you want to make a specific offer, include a JSON block at the end:
 ```
 The offer will be automatically parsed. Price must be between ${inventory_item.least_price:.2f} and ${inventory_item.selling_price:.2f}."""
     
-    # Build filtered conversation context (seller sees more than buyer)
+    # Build filtered conversation context - seller ONLY sees buyer messages and their own messages
     history_text = ""
     if conversation_history:
         history_text = "\n\nConversation history:\n"
         for msg in conversation_history[-10:]:
-            history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
+            sender_type = msg.get('sender_type', '')
+            sender_id = msg.get('sender_id', '')
+            
+            # Seller can only see:
+            # 1. Messages from the buyer (sender_type == "buyer")
+            # 2. Their own messages (sender_id == seller.seller_id)
+            if sender_type == "buyer" or sender_id == seller.seller_id:
+                history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
     
     user_prompt = f"""The buyer {buyer_name} is negotiating for {constraints.item_name}.{history_text}
 
-Respond with your message. You can make an offer by including the JSON block format shown above."""
+CRITICAL: Write ONLY your actual response to the buyer. DO NOT think out loud.
+DO NOT start with "Okay", "Let's see", "The user", etc.
+DO NOT explain what you're going to do.
+Just respond directly as if you're talking to the buyer right now.
+
+Good example: "I can offer $20 per unit for 50 mice. Free shipping included!"
+BAD example: "Okay, let's see. The user mentioned... I need to check..."
+
+Write your response NOW (under 80 words):"""
     
     return [
         {"role": "system", "content": system_prompt},

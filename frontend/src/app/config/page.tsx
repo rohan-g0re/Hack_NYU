@@ -29,8 +29,14 @@ export default function ConfigPage() {
     console.log('Sellers:', sellers);
     console.log('LLM Config:', llmConfig);
     
-    // Validate configuration
-    const errors = validateEpisodeConfig(buyer, sellers);
+    // Filter out empty inventory items before validation and submission
+    const cleanedSellers = sellers.map(seller => ({
+      ...seller,
+      inventory: seller.inventory.filter(item => item.item_name && item.item_name.trim() !== '')
+    }));
+    
+    // Validate configuration with cleaned sellers
+    const errors = validateEpisodeConfig(buyer, cleanedSellers);
     console.log('Validation errors:', errors);
     
     if (errors.length > 0) {
@@ -45,9 +51,10 @@ export default function ConfigPage() {
 
     try {
       console.log('Calling initializeSession API...');
+      
       const response = await initializeSession({
         buyer,
-        sellers,
+        sellers: cleanedSellers,
         llm_config: llmConfig,
       });
 

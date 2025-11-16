@@ -8,10 +8,7 @@ import { Input } from '@/components/Input';
 import { DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS } from '@/lib/constants';
 
 const LLM_MODELS = [
-  { value: 'llama-3-8b-instruct', label: 'Llama 3 8B Instruct' },
-  { value: 'llama-3-70b-instruct', label: 'Llama 3 70B Instruct' },
-  { value: 'mistral-7b-instruct', label: 'Mistral 7B Instruct' },
-  { value: 'mixtral-8x7b-instruct', label: 'Mixtral 8x7B Instruct' },
+  { value: 'qwen/qwen3-1.7b', label: 'Qwen 3 1.7B' },
 ];
 
 export function LLMConfigForm() {

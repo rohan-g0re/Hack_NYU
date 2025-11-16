@@ -79,6 +79,8 @@ class BuyerAgent:
                 stop=None
             )
             
+            raw_response = result.text  # Store for debug event
+            
             # Sanitize output
             message_text = self._sanitize_message(result.text)
             
@@ -92,7 +94,8 @@ class BuyerAgent:
             
             return {
                 "message": message_text,
-                "mentioned_sellers": mentioned_sellers
+                "mentioned_sellers": mentioned_sellers,
+                "raw_response": raw_response  # Include raw response for debugging
             }
             
         except Exception as e:
@@ -100,26 +103,65 @@ class BuyerAgent:
             # Fallback message
             return {
                 "message": "I'm considering the offers. Please give me a moment.",
-                "mentioned_sellers": []
+                "mentioned_sellers": [],
+                "raw_response": f"ERROR: {str(e)}"
             }
     
     def _sanitize_message(self, text: str) -> str:
         """
-        Sanitize LLM output.
+        Sanitize LLM output based on observed qwen3-1.7b format.
         
         WHAT: Clean and normalize message text
-        WHY: Remove artifacts, normalize whitespace
-        HOW: Trim, collapse whitespace, remove markdown code blocks
+        WHY: Remove artifacts, thinking tags, meta-commentary
+        HOW: Extract actual message after </think> tags, remove all meta-commentary
+        
+        Expected format: <think>...</think> [actual message]
         """
         if not text:
             return ""
         
-        # Remove markdown code blocks if present
+        # Strategy 1: If </think> exists, take everything after the LAST </think>
+        if '</think>' in text.lower():
+            # Find the last occurrence of </think> (case-insensitive)
+            parts = re.split(r'</think>', text, flags=re.IGNORECASE | re.DOTALL)
+            if len(parts) > 1:
+                # Take everything after the last </think>
+                text = parts[-1]
+        
+        # Strategy 2: Remove any remaining <think>...</think> blocks (in case of nested or malformed)
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove any orphaned opening tags
+        text = re.sub(r'<think>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<reasoning>', '', text, flags=re.IGNORECASE)
+        
+        # Remove markdown code blocks
         text = re.sub(r'```[a-z]*\n?', '', text)
         text = re.sub(r'```', '', text)
         
         # Remove JSON blocks (seller offers, not buyer)
         text = re.sub(r'\{[^}]*"offer"[^}]*\}', '', text, flags=re.IGNORECASE)
+        
+        # Remove "---" separator that might appear between thinking and message
+        text = re.sub(r'\s*---+\s*', ' ', text)
+        
+        # Remove common meta-commentary patterns (more aggressive)
+        text = re.sub(r'^(Okay,?\s+)?(let me|let\'s|I need to|I should|I want to|I will)\s+.*?[.!]\s+', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'^(Okay,?\s+)?(the user wants|user mentioned|user said|the available)\s+.*?[.!]\s+', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'(First,?\s+|Second,?\s+|Then,?\s+|Also,?\s+|Maybe\s+)', '', text, flags=re.IGNORECASE)
+        
+        # Remove any sentences that contain meta-commentary keywords
+        sentences = text.split('. ')
+        filtered_sentences = []
+        meta_keywords = ['check the', 'mention them', 'compare offers', 'should ask', 'need to', 'want to', 'let me', 'I should', 'maybe', 'user is', 'user has']
+        for sentence in sentences:
+            if not any(keyword in sentence.lower() for keyword in meta_keywords):
+                filtered_sentences.append(sentence)
+        text = '. '.join(filtered_sentences)
+        
+        # Remove any remaining XML-like tags as a catch-all
+        text = re.sub(r'<[^>]+>', '', text)
         
         # Collapse whitespace
         text = re.sub(r'\s+', ' ', text)

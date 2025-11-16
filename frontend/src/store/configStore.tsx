@@ -31,7 +31,7 @@ const initialBuyer: BuyerConfig = {
 };
 
 const initialLLMConfig: LLMConfig = {
-  model: 'llama-3-8b-instruct',
+  model: 'qwen/qwen3-1.7b',
   temperature: DEFAULT_TEMPERATURE,
   max_tokens: DEFAULT_MAX_TOKENS,
 };

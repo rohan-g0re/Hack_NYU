@@ -211,6 +211,7 @@ export type NegotiationEvent =
   | { type: 'round_start'; round_number: number; max_rounds?: number; timestamp: string }
   | { type: 'negotiation_complete'; room_id?: string; outcome?: string; rounds_completed?: number; duration_seconds?: number; selected_seller_name?: string; timestamp: string }
   | { type: 'heartbeat'; timestamp: string; message?: string; round?: number }
+  | { type: 'debug_raw'; agent_type: 'buyer' | 'seller'; agent_name: string; raw_response: string; sanitized_message: string; round: number; timestamp: string }
   | { type: 'error'; error_code?: string; error?: string; message: string; retry_count?: number; timestamp: string };
 
 // Legacy SSE event type (for backward compatibility)

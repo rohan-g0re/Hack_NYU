@@ -7,7 +7,7 @@ import { Input } from '@/components/Input';
 import { NumberInput } from '@/components/NumberInput';
 import { Button } from '@/components/Button';
 import type { ShoppingItem } from '@/lib/types';
-import { generateId } from '@/utils/helpers';
+import { generateItemId } from '@/utils/helpers';
 
 export function BuyerConfigForm() {
   const { buyer, updateBuyerName, addShoppingItem, updateShoppingItem, removeShoppingItem } = useConfig();
@@ -15,7 +15,7 @@ export function BuyerConfigForm() {
 
   const handleAddItem = () => {
     const newItem: ShoppingItem = {
-      item_id: `item_${generateId()}`,
+      item_id: generateItemId(''), // Will be 'item_unknown' initially
       item_name: '',
       quantity_needed: 1,
       min_price_per_unit: 0,

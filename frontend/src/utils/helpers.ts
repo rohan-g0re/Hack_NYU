@@ -6,6 +6,21 @@ export function generateId(): string {
 }
 
 /**
+ * Generate a consistent item_id from an item name
+ * This ensures matching items across buyer and sellers have the same ID
+ */
+export function generateItemId(itemName: string): string {
+  // Normalize: lowercase, remove spaces/special chars, trim
+  const normalized = itemName
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+  
+  return `item_${normalized || 'unknown'}`;
+}
+
+/**
  * Debounce function calls
  */
 export function debounce<T extends (...args: any[]) => any>(

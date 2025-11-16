@@ -42,6 +42,7 @@ export function openNegotiationStream(
     'round_start',
     'negotiation_complete',
     'heartbeat',
+    'debug_raw',
     'error'
   ];
 

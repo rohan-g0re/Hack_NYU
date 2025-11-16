@@ -14,6 +14,11 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_item_name(name: str) -> str:
+    """Normalize item name for matching: lowercase and strip whitespace."""
+    return name.lower().strip()
+
+
 def select_sellers_for_item(
     buyer_item: BuyerItem,
     sellers: List[Seller],
@@ -39,11 +44,15 @@ def select_sellers_for_item(
     participating_sellers = []
     skipped_reasons = []
     
+    # Normalize buyer item name for matching
+    normalized_buyer_name = _normalize_item_name(buyer_item.item_name)
+    
     for seller, inventory_list in zip(sellers, seller_inventories):
-        # Find matching inventory item
+        # Find matching inventory item BY NAME (case-insensitive)
         matching_inventory = None
         for inv in inventory_list:
-            if inv.item_id == buyer_item.item_id:
+            normalized_inv_name = _normalize_item_name(inv.item_name)
+            if normalized_inv_name == normalized_buyer_name:
                 matching_inventory = inv
                 break
         
@@ -119,11 +128,15 @@ def select_sellers_from_models(
     participating_sellers = []
     skipped_reasons = []
     
+    # Normalize buyer item name for matching
+    normalized_buyer_name = _normalize_item_name(buyer_item_name)
+    
     for seller in sellers:
-        # Find matching inventory item
+        # Find matching inventory item BY NAME (case-insensitive)
         matching_inventory = None
         for inv in seller.inventory:
-            if inv.item_id == buyer_item_id:
+            normalized_inv_name = _normalize_item_name(inv.item_name)
+            if normalized_inv_name == normalized_buyer_name:
                 matching_inventory = inv
                 break
         
