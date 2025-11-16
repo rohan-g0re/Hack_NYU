@@ -130,14 +130,16 @@
 
 ### 2.2 Key User Actions
 
+> Terminology note: the UI uses the term **“Episode”** for user-facing clarity, while the backend represents this as a **Session** (`session_id`) and **Negotiation Runs** (`room_id`/`negotiation_id`).
+
 | Action | Screen | Backend Call | User Feedback |
 |--------|--------|--------------|---------------|
-| Create episode | Configuration | POST /episode/initialize | Loading spinner → Redirect |
-| Generate negotiations | Dashboard | POST /episode/{id}/generate | Match sellers to items |
-| Start item negotiation | Dashboard | POST /negotiation/{item}/start | Transition to per-item chat |
-| Watch negotiation | Negotiation Room | GET /negotiation/{id}/stream (SSE) | Live message updates |
-| View decision | Negotiation Room | Auto from stream | Modal popup |
-| View final receipt | Receipt | GET /episode/{id}/receipt | Display itemized results |
+| Create episode (initialize session) | Configuration | `POST /api/v1/simulation/initialize` | Loading spinner → Redirect to dashboard with generated negotiation rooms |
+| View episode/session details | Dashboard | `GET /api/v1/simulation/{session_id}` | Refresh episode metadata and negotiation rooms |
+| Start item negotiation | Dashboard | `POST /api/v1/negotiation/{room_id}/start` | Transition to per-item chat and open SSE stream |
+| Watch negotiation | Negotiation Room | `GET /api/v1/negotiation/{room_id}/stream` (SSE) | Live message updates and offer updates |
+| View decision | Negotiation Room | Auto from stream (`negotiation_complete` event) | Modal popup |
+| View final receipt (summary) | Receipt | `GET /api/v1/simulation/{session_id}/summary` | Display itemized episode/session results |
 
 ---
 
@@ -287,7 +289,7 @@
 
 ### 3.3 Screen 3: Negotiation Dashboard
 
-**Purpose:** Overview of all items in buyer's purchase plan and their seller matching status
+**Purpose:** Overview of all items in buyer's purchase plan and their seller matching status for the current episode/session
 
 **Layout:**
 ```
@@ -295,9 +297,9 @@
 │  Episode: #550e8400  |  Buyer: John Doe  |  Items: 2/2       │
 ├──────────────────────────────────────────────────────────────┤
 │                                                               │
-│  Purchase Plan Overview                                       │
+│  Purchase Plan / Episode Overview                             │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │ Items Planned: 2 | Negotiated: 0 | Completed: 0        │  │
+│  │ Items Planned: 2 | Negotiations Started: 0 | Completed: 0│  │
 │  │ ████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0%      │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                               │
@@ -632,7 +634,6 @@ App
 │   ├── ConfigurationPage
 │   │   ├── BuyerConfigForm
 │   │   │   ├── NameInput
-│   │   │   ├── BudgetRangeInput
 │   │   │   └── ShoppingListEditor
 │   │   │       └── ItemRow (repeatable)
 │   │   ├── SellersConfigForm
@@ -645,7 +646,7 @@ App
 │   │       ├── ProviderSelector
 │   │       └── ModelDropdown
 │   ├── DashboardPage
-│   │   ├── BudgetOverview
+│   │   ├── EpisodeOverview
 │   │   └── ItemCardList
 │   │       └── ItemCard (repeatable)
 │   ├── NegotiationRoomPage
@@ -661,7 +662,7 @@ App
 │   │   │   └── TypingIndicator
 │   │   └── ActionButtons
 │   └── SummaryPage
-│       ├── BudgetSummaryCard
+│       ├── EpisodeSummaryCard
 │       ├── PurchasesList
 │       │   └── PurchaseCard (repeatable)
 │       ├── FailedItemsList
@@ -686,9 +687,9 @@ App
 ### 4.2 Key Components Breakdown
 
 #### **BuyerConfigForm**
-- Inputs: name (text), budget min/max (numbers)
-- Shopping list: dynamic array of items
-- Validation: budget max > min, items unique
+- Inputs: buyer name (text)
+- Shopping list: dynamic array of items with per-item min/max price and quantity
+- Validation: per-item `maxPrice > minPrice`, items unique
 
 #### **SellerCard**
 - Repeatable component (up to 10)
@@ -860,7 +861,7 @@ App
 ```
 Primary:     #3B82F6 (Blue)      - Buttons, links, buyer messages
 Secondary:   #10B981 (Green)     - Success, best price
-Warning:     #F59E0B (Orange)    - Warnings, budget alerts
+Warning:     #F59E0B (Orange)    - Warnings, constraint/price alerts
 Danger:      #EF4444 (Red)       - Errors, failed items
 Neutral:     #6B7280 (Gray)      - Text, borders, backgrounds
 ```
@@ -929,8 +930,8 @@ xl:  3rem (48px)
 ### 7.1 Recommended Stack (Hackathon-Optimized)
 
 **Core Framework:**
-- **React 18+** with Vite (fast dev server)
-- **React Router** for navigation
+- **Next.js 14+ (App Router)** for routing/layout
+- **React 18+** under the hood
 - **Tailwind CSS** for styling (utility-first, fast)
 
 **State Management:**
@@ -963,11 +964,6 @@ xl:  3rem (48px)
 
 **If team prefers:**
 
-**Next.js Option:**
-- Next.js 14 (App Router)
-- Better for production, more complex setup
-- Only if team is experienced
-
 **Vue Option:**
 - Vue 3 + Vite
 - Composition API
@@ -978,7 +974,70 @@ xl:  3rem (48px)
 - Less boilerplate
 - Great for speed
 
-**Recommendation:** Stick with React + Vite for maximum velocity
+**Recommendation:** Stick with Next.js + Tailwind for maximum velocity
+
+### 7.3 Project Structure (Next.js + App Router)
+
+The frontend codebase lives in `frontend/` and follows a modular structure that mirrors backend concepts (session/episode configuration, negotiation rooms, summary):
+
+```text
+frontend/
+│
+├── package.json
+├── next.config.js
+├── tsconfig.json
+├── public/                             # Static assets (logos, icons)
+└── src/
+    ├── app/                            # Next.js App Router entrypoints
+    │   ├── layout.tsx                  # Global layout, providers, theme
+    │   ├── page.tsx                    # Landing / home (start new episode)
+    │   ├── config/                     # Episode configuration wizard
+    │   │   └── page.tsx
+    │   ├── negotiations/               # Negotiation dashboard & rooms
+    │   │   ├── page.tsx                # List of negotiation rooms
+    │   │   └── [roomId]/               # Per-item negotiation room
+    │   │       └── page.tsx
+    │   └── summary/                    # Final receipt / session summary
+    │       └── page.tsx
+    │
+    ├── features/                       # Feature modules aligned with backend
+    │   ├── episode-config/             # Buyer + sellers + LLM config wizard
+    │   │   ├── components/             # Forms, steppers, seller cards
+    │   │   ├── hooks/                  # useEpisodeConfig, useSellerForm, etc.
+    │   │   └── state.ts                # Local feature state helpers
+    │   ├── negotiation-room/           # Per-item chat UI & SSE handling
+    │   │   ├── components/             # Chat window, offers panel, toolbar
+    │   │   ├── hooks/                  # useNegotiationStream, useNegotiationRoom
+    │   │   └── state.ts
+    │   ├── summary-receipt/            # Final receipt & metrics
+    │   │   ├── components/             # Summary cards, tables, metrics
+    │   │   └── hooks/                  # useSessionSummary
+    │   └── shared/                     # Feature-level shared pieces
+    │
+    ├── lib/                            # API clients & shared logic
+    │   ├── api/                        # Mirrors backend endpoints
+    │   │   ├── client.ts               # Fetch wrapper + error handling
+    │   │   ├── simulation.ts           # /simulation endpoints (init, summary)
+    │   │   ├── negotiation.ts          # /negotiation endpoints + SSE helpers
+    │   │   └── status.ts               # /health, /llm/status
+    │   ├── forms/                      # Zod schemas mirroring backend models
+    │   ├── router.ts                   # Route helpers (config, negotiations, summary)
+    │   └── constants.ts                # Enums: priorities, speaking styles, etc.
+    │
+    ├── store/                          # Global state (e.g., Zustand or Context)
+    │   ├── sessionStore.ts             # Active session/episode metadata
+    │   ├── configStore.ts              # Draft configuration during wizard
+    │   └── negotiationStore.ts         # Per-room messages, offers, active room
+    │
+    ├── components/                     # Shared UI primitives (buttons, inputs, modals)
+    ├── styles/                         # Global styles, Tailwind config or CSS modules
+    └── utils/                          # Helpers (formatting, @mention highlighting, etc.)
+```
+
+This layout lines up directly with the backend:
+- `episode-config` ↔ `/api/v1/simulation/initialize`
+- `negotiation-room` ↔ `/api/v1/negotiation/{room_id}/*` + SSE stream
+- `summary-receipt` ↔ `/api/v1/simulation/{session_id}/summary`
 
 ---
 
@@ -1510,7 +1569,7 @@ npm run dev  # Frontend on :5173
 
 3. **Dashboard (30s):**
    - Point out items, available sellers
-   - Show budget tracker
+   - Show per-item constraints and negotiation progress
    - Click "Start Negotiation" on Laptop
 
 4. **Live Negotiation (2m):**
@@ -1522,7 +1581,7 @@ npm run dev  # Frontend on :5173
 
 5. **Summary (1m):**
    - Show purchase details
-   - Highlight budget utilization
+   - Highlight how final prices relate to per-item constraint ranges
    - Show negotiation stats
 
 **Total:** ~5 minutes with buffer for questions

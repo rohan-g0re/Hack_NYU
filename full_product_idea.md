@@ -1,5 +1,3 @@
-
-
 ## 1. Product Overview (Updated)
 
 **Name:** Multi-Agent Marketplace Simulator (MAMS)
@@ -33,7 +31,6 @@ for multiple items, where:
 
    * Buyer treats sellers as black boxes with only conversational evidence.
    * Seller’s intrinsic attributes (costs, least_price, style, priorities) are internal.
-
 2. **Per-Item View for Buyer**
 
    * Buyer only has **per-item constraints**:
@@ -42,17 +39,14 @@ for multiple items, where:
      * Max acceptable price for that item
      * Required quantity
    * There is **no global cross-item budget optimization**.
-
 3. **LLM-Driven Reasoning (No Handcrafted Scoring)**
 
    * No designed numerical scoring like “price_score + behavior_score”.
    * Buyer’s decision is purely described as “Let LLM think and justify” using instructions in prompts.
-
 4. **DB-Backed State**
 
    * All configuration and negotiation logs stored in a DB.
    * One configuration session can spawn multiple negotiations over time without re-entering configs.
-
 5. **Single Backend: LM Studio**
 
    * All agents (Buyer and Sellers) use LM Studio–hosted models.
@@ -116,14 +110,12 @@ Each seller has:
 * **Seller identity:**
 
   * `seller_id`, `name/handle` (e.g. `"seller_1"`, `"@AlphaStore"`)
-
 * **Inventory entries** (per item):
 
   * `item_name`
   * `cost_price`
   * `selling_price` (initial ask)
   * `least_price` (price floor, strictly > cost_price)
-
 * **Soft internal profile (not exposed to buyer):**
 
   * Priority balance:
@@ -218,7 +210,6 @@ Each **negotiation episode** is:
    * Buyer’s per-item constraints loaded from DB:
 
      * quantity, min_price, max_price.
-
 2. **Conversation Loop (LLM-driven):**
 
    * Buyer sends initial message (e.g., “Hi, I need 3 units of X. What can you offer?”).
@@ -246,7 +237,6 @@ Each **negotiation episode** is:
          * Push for better deal.
          * Accept an offer.
          * Reject all and walk away.
-
 3. **Termination:**
 
    * Episode ends when:
@@ -305,7 +295,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
    * `session_id`
    * `created_at`
    * `description` (optional)
-
 2. **BuyerConfig**
 
    * `session_id` (FK)
@@ -315,7 +304,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
      * `quantity`
      * `min_price`
      * `max_price`
-
 3. **SellerConfig**
 
    * `seller_id`
@@ -324,7 +312,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
    * `customer_retention_weight`
    * `profit_maximization_weight`
    * `style_profile` (rude/neutral/sweet label or similar)
-
 4. **SellerInventory**
 
    * `seller_id` (FK)
@@ -332,7 +319,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
    * `cost_price`
    * `selling_price`
    * `least_price`
-
 5. **NegotiationRuns**
 
    * `negotiation_id`
@@ -340,7 +326,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
    * `item_name`
    * `status` (in_progress / completed / aborted)
    * `started_at`, `ended_at`
-
 6. **Messages**
 
    * `message_id`
@@ -350,7 +335,6 @@ At a high level, you’ll likely need the following logical entities in your DB 
    * `text`
    * `timestamp`
    * Metadata: who it was routed to (for sellers), internal logs, etc.
-
 7. **Outcomes**
 
    * `negotiation_id` (FK)
@@ -385,377 +369,3 @@ At a high level, you’ll likely need the following logical entities in your DB 
 
   * Requesting all seller responses for a given buyer message in a single “step”.
 * Responses are **streamed** back to UI for chat-like experience.
-
----
-
-## 9. What We Explicitly Removed / Changed
-
-* ❌ **Buyer internal knowledge of seller costs, least prices, or strategy knobs**
-
-  * Buyer only learns what sellers reveal in conversation.
-
-* ❌ **Seller long-term negotiation history as private knowledge**
-
-  * Sellers are stateless across runs (beyond static config in DB).
-
-* ❌ **Global budget optimization across items**
-
-  * Buyer only uses per-item `min_price` and `max_price` and quantity.
-
-* ❌ **Hand-engineered scoring & numeric decision rules (6.2)**
-
-  * No structured “score = a*price + b*behavior”.
-  * Decisions are left to LLM’s qualitative reasoning.
-
-* ❌ **OpenRouter / remote models (7.1 old)**
-
-  * Only LM Studio / local inference now.
-
-* ✅ **DB for all state (instead of pure in-memory)**
-
-  * Sessions, configs, negotiation logs, outcomes all persisted.
-  * Enables multiple negotiations on top of a single configuration.
-
-
-
-I’ll treat this as **“User Flow + Episode Lifecycle”** layered on top of the architecture we already defined.
-
----
-
-## 1. Top-Level Concept: Negotiation Episode
-
-A **Negotiation Episode** is one complete run where:
-
-* You configure **seller agents** and their inventories,
-* Configure the **buyer’s purchase plan**,
-* The system computes which sellers can serve which items,
-* Then runs **per-item negotiation chats**, and
-* Ends with a **final receipt** summarizing all purchased items.
-
-Everything (config, chats, outcome) is tied to that episode.
-
----
-
-## 2. Screen-by-Screen User Flow
-
-### 2.1 Start New Negotiation Episode
-
-**Entry point UI:**
-
-* Button: **“Start New Negotiation”**
-* System creates a new `episode_id` in the DB with status `draft`.
-
-Data created:
-
-* `Episode`:
-
-  * `episode_id`
-  * `created_at`
-  * `status = "draft"`
-
-The user now moves into a multi-step wizard:
-
-1. Add Sellers
-2. Configure Items & Catalog (if needed)
-3. Configure Buyer Purchase Plan
-4. Run Negotiations
-5. View Final Receipt
-
----
-
-### 2.2 Step 1 – Add Seller Agents (One by One)
-
-UI: **“Add Seller”** form, repeated.
-
-For each seller, user fills:
-
-* **Seller identity**
-
-  * Seller name / handle (used for `@mentions` in chat)
-* **Item list (inventory)**
-
-  * Item (chosen from allowed items list)
-  * Available quantity
-  * Cost price
-  * Selling (listed) price
-  * Least acceptable price (floor)
-* **Internal profile (hidden from buyer, used for prompting)**
-
-  * Importance of customer retention vs profit
-  * Speaking style: rude / neutral / very sweet
-
-User can:
-
-* Save seller
-* Add another seller
-* Edit/remove sellers before finalizing episode config
-
-Data written per seller:
-
-* `SellerConfig` linked to `episode_id`
-* `SellerInventory` rows for each item
-
-> At this point, the **universe of sellers** for the episode is fixed.
-
----
-
-### 2.3 Step 2 – Available Items (Global Catalog)
-
-Two options (conceptually):
-
-* **Hardcoded catalog** in backend (e.g., `["Laptop", "Phone Case", "Cable", ...]`)
-* Or a **Settings** page where admin/user defines the total list of available items.
-
-In the episode flow, we just **use** this list:
-
-* The “Add Seller” and “Buyer Purchase Plan” forms both **pick from the same catalog**.
-* This guarantees matching between seller inventory and buyer demand.
-
-Data:
-
-* Not episode-specific; this is global “catalog” configuration.
-
----
-
-### 2.4 Step 3 – Configure Buyer Purchase Plan
-
-UI: **“Buyer Purchase Plan”** form.
-
-For the current `episode_id`, user defines:
-
-For each planned item:
-
-* Choose **Item** (from catalog)
-* Enter **Quantity to purchase**
-* Set **Minimum acceptable price** per unit (buyer’s lower bound)
-* Set **Maximum acceptable price** per unit (buyer’s upper bound)
-
-Example row:
-
-* Item: `Phone Case`
-* Quantity: `2`
-* Min price: `8`
-* Max price: `15`
-
-User can add multiple rows:
-
-* `[(item_1, qty_1, min_1, max_1), (item_2, qty_2, min_2, max_2), ...]`
-
-Data written:
-
-* `BuyerConfig` rows linked to `episode_id`
-  (one row per item the buyer wants)
-
-> Key constraint:
-> Buyer has **no global budget**, only *per-item* min/max price and quantity.
-
----
-
-### 2.5 Step 4 – Match Sellers to Items (Algorithmic Seller Discovery)
-
-Once sellers and buyer plan are defined, user clicks something like **“Generate Negotiations”**.
-
-System does:
-
-1. For each item in the **Buyer Purchase Plan**:
-
-   * Look up all `SellerInventory` rows in this episode where:
-
-     * `item_name` matches
-     * `available_quantity > 0` (or at least enough for requested qty if you want that check)
-
-2. Build a mapping:
-
-   ```text
-   item_name → [seller_1, seller_2, ..., seller_k]
-   ```
-
-3. For each (episode, item) pair with at least one seller:
-
-   * Create a **Negotiation Record**:
-
-     * `negotiation_id`
-     * `episode_id`
-     * `item_name`
-     * Linked sellers
-     * Status = `pending`
-
-If no seller is available for an item:
-
-* The system can immediately mark that item as `unfulfillable` and show this in the UI before negotiations even start.
-
-At the end of this step, the episode has:
-
-* A defined **set of negotiation rooms**, one per buyer-item, each with:
-
-  * Buyer
-  * Set of candidate sellers.
-
----
-
-### 2.6 Step 5 – Per-Item Negotiation Chats
-
-For each item in the Buyer Purchase Plan that has at least one seller:
-
-#### 2.6.1 Start Chat for Item X
-
-UI:
-
-* You click on an item row (e.g., `Phone Case`) and enter its **Negotiation Chat View**:
-
-  * Shows:
-
-    * Item name & requested quantity
-    * Buyer’s min/max price constraints
-    * Participating sellers (handles only)
-    * Conversation window
-
-Backend:
-
-* Instantiate a **Buyer Agent instance** keyed by `(episode_id, negotiation_id, item_name)`.
-* For each participating seller, instantiate a **Seller Agent instance** logged against that `negotiation_id`.
-
-> Note: This is conceptual “instance”; in practice it’s just state + prompt context per agent within the negotiation.
-
-#### 2.6.2 Chat Mechanics
-
-* **Buyer sends first message** (generated by LLM or user-triggered via “Start Negotiation” button).
-
-* System:
-
-  * Records the message in `Messages` table.
-  * Routes the content to all relevant **Seller Agents** for this item.
-
-* Each **Seller Agent**:
-
-  * Calls LM Studio with:
-
-    * Their internal inventory/pricing for this item.
-    * Their style/priorities.
-    * The buyer’s latest message.
-  * Generates their reply.
-  * Reply is recorded in `Messages`, then displayed in the UI under their handle.
-
-* Buyer Agent:
-
-  * Sees all seller replies for that item.
-  * Uses LM Studio reasoning to:
-
-    * Ask follow-ups
-    * Focus on specific sellers using `@seller_name`
-    * Decide whether any offer is acceptable within `[min_price, max_price]`
-    * Decide when to stop.
-
-> There is **no explicit scoring algorithm** here – decisions are all in “prompted reasoning” space.
-
-#### 2.6.3 Ending the Negotiation for Item X
-
-The item’s negotiation ends when the Buyer Agent:
-
-* Accepts an offer:
-
-  * Pick `seller_id`
-  * Agree on `final_price`
-  * Confirm `quantity` (or adjust if needed)
-* Or declares **“no deal”**.
-
-System then:
-
-* Marks the `NegotiationRun` as `completed`.
-* Writes an `Outcome` row for this `negotiation_id`:
-
-  * If deal:
-
-    * `decision_type = "deal"`
-    * `seller_id`
-    * `final_price`
-    * `quantity`
-  * If no deal:
-
-    * `decision_type = "no_deal"`
-
-Optionally decrements seller’s available quantity in `SellerInventory` for that item (if we want stock depletion to matter across negotiations in the same episode).
-
-Repeat for each item.
-
-Negotiations for multiple items can be run:
-
-* Sequentially (simple for hackathon + LM Studio), or
-* Conceptually “independently” from a user perspective (one chat per item).
-
----
-
-### 2.7 Step 6 – Final Receipt
-
-After all item negotiations are done (or the user chooses to stop):
-
-UI: **“View Final Receipt”** for the episode.
-
-System aggregates from `Outcomes`:
-
-* For each item in Buyer Purchase Plan:
-
-  * Was a deal made?
-  * If yes:
-
-    * Seller chosen
-    * Final unit price
-    * Quantity purchased
-    * Total price
-* Items with no deal are displayed as **“Not Purchased”** with a reason (e.g., “No acceptable offer within min–max range”).
-
-The **Final Receipt** view shows:
-
-* **Episode summary:**
-
-  * `episode_id`, timestamp
-* **Itemized table:**
-
-  * Item
-  * Quantity requested
-  * Quantity purchased
-  * Seller
-  * Final price
-  * Total cost (per item)
-  * Deal / No deal status
-* **Totals:**
-
-  * Total number of items successfully purchased
-  * Total spend (sum of item totals)
-
-All of this is persisted in the DB, so you can later:
-
-* Re-open an episode
-* Inspect per-item negotiation logs
-* Compare behavior across episodes.
-
----
-
-## 3. How This Fits the Overall Idea
-
-Putting it all together:
-
-* **Episode = One full configured world**:
-
-  * Sellers + Inventory
-  * Buyer purchase plan (per-item constraints)
-  * Negotiations per item
-  * Final receipt
-
-* **Flow** is:
-
-  1. Start new episode
-  2. Add sellers one by one via UI form
-  3. Define buyer’s items, quantities, and per-item min/max prices
-  4. System computes which sellers are viable for each item
-  5. For each item, run a **Buyer ↔ Multiple Sellers** chat in isolation
-  6. Once all are done, compile a **final receipt** from outcomes
-
-* **LLM (LM Studio)** drives:
-
-  * All agent decisions
-  * All negotiation behavior
-  * All qualitative reasoning (no hand-coded scores).
-
-
-

@@ -48,93 +48,155 @@ A FastAPI-based backend that orchestrates opaque multi-agent negotiations betwee
 
 ## 2. Project Structure
 
-```
-multi-agent-marketplace/
+At the repository root, the codebase is split for two teams:
+
+- `backend/`: Python backend (FastAPI + LangGraph + LM Studio integration)
+- `frontend/`: Next.js frontend (configuration wizard, negotiation UI, summary views)
+
+```text
+backend/
 │
-├── app/
-│   ├── __init__.py
-│   ├── main.py                          # FastAPI application entry point
-│   │
-│   ├── api/                             # API route handlers
-│   │   ├── __init__.py
-│   │   ├── v1/
-│   │   │   ├── __init__.py
-│   │   │   ├── endpoints/
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── simulation.py       # Session initialization
-│   │   │   │   ├── negotiation.py      # Negotiation control
-│   │   │   │   ├── streaming.py        # SSE streaming endpoints
-│   │   │   │   └── status.py           # Health & status checks
-│   │   │   └── router.py               # API router aggregation
-│   │
-│   ├── core/                            # Core business logic
-│   │   ├── __init__.py
-│   │   ├── config.py                   # App configuration
-│   │   ├── database.py                 # SQLite database connection
-│   │   ├── session_manager.py          # Session lifecycle
-│   │   └── models.py                   # SQLAlchemy database models
-│   │
-│   ├── models/                          # Pydantic schemas
-│   │   ├── __init__.py
-│   │   ├── agent.py                    # Buyer & Seller models
-│   │   ├── negotiation.py              # Negotiation room models
-│   │   ├── message.py                  # Message & conversation models
-│   │   └── api_schemas.py              # API request/response models
-│   │
-│   ├── services/                        # Business logic services
-│   │   ├── __init__.py
-│   │   ├── seller_selection.py         # Seller matching algorithm
-│   │   ├── message_router.py           # @mention parsing & routing
-│   │   ├── visibility_filter.py        # Conversation filtering
-│   │   └── decision_engine.py          # Buyer decision logic
-│   │
-│   ├── agents/                          # LangGraph agent implementations
-│   │   ├── __init__.py
-│   │   ├── buyer_agent.py              # Buyer agent logic
-│   │   ├── seller_agent.py             # Seller agent logic
-│   │   ├── prompts.py                  # Agent prompt templates
-│   │   └── graph_builder.py            # LangGraph workflow construction
-│   │
-│   ├── llm/                             # LLM integration layer
-│   │   ├── __init__.py
-│   │   ├── lm_studio.py                # LM Studio adapter
-│   │   └── streaming_handler.py        # Streaming utilities
-│   │
-│   ├── utils/                           # Utility functions
-│   │   ├── __init__.py
-│   │   ├── logger.py                   # Structured logging
-│   │   ├── validators.py               # Custom validators
-│   │   └── exceptions.py               # Custom exceptions
-│   │
-│   └── middleware/                      # FastAPI middleware
-│       ├── __init__.py
-│       ├── cors.py                     # CORS configuration
-│       └── error_handler.py            # Global error handling
-│
-├── tests/                               # Test suite
-│   ├── __init__.py
-│   ├── unit/
-│   │   ├── test_seller_selection.py
-│   │   ├── test_message_routing.py
-│   │   └── test_agents.py
-│   ├── integration/
-│   │   ├── test_api_endpoints.py
-│   │   └── test_negotiation_flow.py
-│   └── fixtures/
-│       ├── sample_configs.py
-│       └── mock_llm.py
-│
-├── data/                                # Database and logs
-│   ├── marketplace.db                  # SQLite database
+├── pyproject.toml or requirements.txt   # Backend dependencies only
+├── data/                                # Database and logs (backend-local)
+│   ├── marketplace.db                   # SQLite database
 │   └── logs/
 │       └── app.log
 │
-├── .env.example                         # Environment variables template
-├── .env                                 # Actual environment variables (gitignored)
-├── requirements.txt                     # Python dependencies
-├── Dockerfile                           # Container configuration (optional)
-├── docker-compose.yml                   # Multi-service setup (optional)
-└── README.md                            # Setup instructions
+├── app/                                 # Backend Python package
+│   ├── __init__.py
+│   │
+│   ├── main.py                          # FastAPI application entry point
+│   │                                    # - Initializes app
+│   │                                    # - Registers middleware
+│   │                                    # - Includes API routers
+│   │                                    # - Startup/shutdown hooks
+│   │
+│   ├── api/                             # API route handlers (frontend contract)
+│   │   ├── __init__.py
+│   │   ├── v1/
+│   │   │   ├── __init__.py
+│   │   │   ├── router.py                # API router aggregation for v1
+│   │   │   └── endpoints/
+│   │   │       ├── __init__.py
+│   │   │       ├── simulation.py        # Session initialization
+│   │   │       ├── negotiation.py       # Negotiation control
+│   │   │       ├── streaming.py         # SSE streaming endpoints
+│   │   │       └── status.py            # Health & status checks
+│   │
+│   ├── core/                            # Core infrastructure & configuration
+│   │   ├── __init__.py
+│   │   ├── config.py                    # App configuration (Pydantic settings)
+│   │   ├── database.py                  # SQLite/SQLAlchemy engine & session
+│   │   ├── models.py                    # SQLAlchemy ORM models (DB tables)
+│   │   └── session_manager.py           # Session & negotiation-run lifecycle
+│   │
+│   ├── models/                          # Pydantic / API schemas (domain layer)
+│   │   ├── __init__.py
+│   │   ├── agent.py                     # Buyer & Seller config models
+│   │   ├── negotiation.py               # NegotiationRoom, BuyerDecision, etc.
+│   │   ├── message.py                   # Message & Offer shapes for API
+│   │   └── api_schemas.py               # Request/response models for endpoints
+│   │
+│   ├── services/                        # Business logic services
+│   │   ├── __init__.py
+│   │   ├── seller_selection.py          # Seller matching per buyer item
+│   │   ├── message_router.py            # @mention parsing & routing
+│   │   ├── visibility_filter.py         # Conversation visibility per agent
+│   │   ├── decision_engine.py           # Buyer decision prompts & reasoning
+│   │   └── summary_service.py           # Session summary builder
+│   │
+│   ├── agents/                          # LangGraph agent implementations
+│   │   ├── __init__.py
+│   │   ├── buyer_agent.py               # Buyer agent node logic
+│   │   ├── seller_agent.py              # Seller agent node logic
+│   │   ├── prompts.py                   # Shared prompt templates
+│   │   └── graph_builder.py             # LangGraph workflow construction
+│   │
+│   ├── llm/                             # LLM integration layer (LM Studio only)
+│   │   ├── __init__.py
+│   │   ├── lm_studio.py                 # LM Studio adapter (sync/async, errors)
+│   │   └── streaming_handler.py         # Utilities to stream LLM output to SSE
+│   │
+│   ├── utils/                           # Cross-cutting utilities
+│   │   ├── __init__.py
+│   │   ├── logger.py                    # Structured logging
+│   │   ├── validators.py                # Custom validators
+│   │   └── exceptions.py                # Custom exception types
+│   │
+│   └── middleware/                      # FastAPI middleware
+│       ├── __init__.py
+│       ├── cors.py                      # CORS configuration
+│       └── error_handler.py             # Global error handling
+│
+└── tests/                               # Backend test suite
+    ├── __init__.py
+    ├── unit/
+    │   ├── test_seller_selection.py
+    │   ├── test_message_routing.py
+    │   ├── test_visibility_filter.py
+    │   └── test_agents.py              # Buyer/seller agents in isolation
+    ├── integration/
+    │   ├── test_api_endpoints.py       # REST/SSE contract tests
+    │   └── test_negotiation_flow.py    # End-to-end negotiation flow
+    └── fixtures/
+        ├── sample_configs.py           # Example buyer/seller configs
+        └── mock_llm.py                 # Fake LM Studio adapter for tests
+```
+
+The **frontend** folder uses a modular Next.js (App Router) structure that mirrors backend concepts:
+
+```text
+frontend/
+│
+├── package.json
+├── next.config.js
+├── tsconfig.json
+├── public/                             # Static assets (logos, icons)
+└── src/
+    ├── app/                            # Next.js App Router entrypoints
+    │   ├── layout.tsx                  # Global layout, providers, theme
+    │   ├── page.tsx                    # Landing / home (start new episode)
+    │   ├── config/                     # Episode configuration wizard
+    │   │   └── page.tsx
+    │   ├── negotiations/               # Negotiation dashboard & rooms
+    │   │   ├── page.tsx                # List of negotiation rooms
+    │   │   └── [roomId]/               # Per-item negotiation room
+    │   │       └── page.tsx
+    │   └── summary/                    # Final receipt / session summary
+    │       └── page.tsx
+    │
+    ├── features/                       # Feature modules aligned to backend domains
+    │   ├── episode-config/             # Buyer + sellers + LLM config wizard
+    │   │   ├── components/             # Forms, steppers, seller cards
+    │   │   ├── hooks/                  # useEpisodeConfig, useSellerForm, etc.
+    │   │   └── state.ts                # Local feature state helpers
+    │   ├── negotiation-room/           # Per-item chat UI & SSE handling
+    │   │   ├── components/             # Chat window, offers panel, toolbar
+    │   │   ├── hooks/                  # useNegotiationStream, useNegotiationRoom
+    │   │   └── state.ts
+    │   ├── summary-receipt/            # Final receipt & metrics
+    │   │   ├── components/             # Summary cards, tables, metrics
+    │   │   └── hooks/                  # useSessionSummary
+    │   └── shared/                     # Feature-level shared pieces (breadcrumbs, badges)
+    │
+    ├── lib/                            # API clients & shared logic
+    │   ├── api/                        # Mirrors backend endpoints
+    │   │   ├── client.ts               # Fetch wrapper + error handling
+    │   │   ├── simulation.ts           # /simulation endpoints (init, summary)
+    │   │   ├── negotiation.ts          # /negotiation endpoints + SSE helpers
+    │   │   └── status.ts               # /health, /llm/status
+    │   ├── forms/                      # Zod schemas mirroring backend Pydantic models
+    │   ├── router.ts                   # Route helpers (config, negotiations, summary)
+    │   └── constants.ts                # Enums: seller priorities, speaking styles, etc.
+    │
+    ├── store/                          # Global state (e.g., Zustand slices)
+    │   ├── sessionStore.ts             # Active session/episode metadata
+    │   ├── configStore.ts              # Draft configuration during wizard
+    │   └── negotiationStore.ts         # Per-room messages, offers, active room
+    │
+    ├── components/                     # Shared UI primitives (buttons, inputs, modals)
+    ├── styles/                         # Global styles, Tailwind config or CSS modules
+    └── utils/                          # Helpers (formatting, @mention highlighting, etc.)
 ```
 
 ---
@@ -682,6 +744,8 @@ GET /api/v1/llm/status
 ### 4.2 Database Tables
 
 #### Sessions Table
+
+Conceptually, a **Session** here corresponds to a single negotiation **Episode** in the product and UX documents (one configured world of buyer + sellers + per-item negotiations).
 ```sql
 CREATE TABLE sessions (
     id UUID PRIMARY KEY,
@@ -1011,7 +1075,7 @@ SessionSummaryResponse:
   - failed_purchases: int
   - purchases: List[PurchaseSummary]
   - failed_items: List[FailedItem]
-  - budget_summary: BudgetSummary
+  - total_cost_summary: TotalCostSummary
   - negotiation_metrics: NegotiationMetrics
 
 PurchaseSummary:
@@ -1027,11 +1091,10 @@ FailedItem:
   - item_name: str
   - reason: str
 
-BudgetSummary:
-  - initial_budget: float
+TotalCostSummary:
   - total_spent: float
-  - remaining: float
-  - utilization_percentage: float
+  - items_purchased: int
+  - average_savings_per_item: float
 
 NegotiationMetrics:
   - average_rounds: float
@@ -1262,7 +1325,7 @@ class NegotiationStream {
 **Step 1.1: User Fills Configuration Form**
 
 Form should collect:
-- Buyer name, shopping list (items + quantities), budget range
+- Buyer name, shopping list (items + quantities and per-item price ranges)
 - Sellers (up to 10): name, inventory, profile
 
 **Step 1.2: Submit Configuration**
@@ -1417,11 +1480,10 @@ function displaySummary(summary) {
   const summaryDiv = document.getElementById('summary-container');
   summaryDiv.innerHTML = `
     <h2>Shopping Summary</h2>
-    <div class="budget-info">
-      <p>Total Budget: $${summary.budget_summary.initial_budget}</p>
-      <p>Total Spent: $${summary.budget_summary.total_spent}</p>
-      <p>Remaining: $${summary.budget_summary.remaining}</p>
-      <p>Utilization: ${summary.budget_summary.utilization_percentage}%</p>
+    <div class="cost-info">
+      <p>Total Spent: $${summary.total_cost_summary.total_spent}</p>
+      <p>Items Purchased: ${summary.total_cost_summary.items_purchased}</p>
+      <p>Average Savings Per Item: $${summary.total_cost_summary.average_savings_per_item}</p>
     </div>
     
     <h3>Purchases (${summary.completed_purchases})</h3>
@@ -1460,12 +1522,13 @@ function displaySummary(summary) {
 ├─────────────────────────────────────┤
 │ Name: [___________________]         │
 │                                     │
-│ Budget Range:                       │
-│  Min: [$______] Max: [$______]     │
-│                                     │
 │ Shopping List:                      │
 │  Item 1: [________] Qty: [__]      │
+│          Min Price: [$____]        │
+│          Max Price: [$____]        │
 │  Item 2: [________] Qty: [__]      │
+│          Min Price: [$____]        │
+│          Max Price: [$____]        │
 │  [+ Add Item]                       │
 └─────────────────────────────────────┘
 ```
@@ -1503,9 +1566,6 @@ function displaySummary(summary) {
 ┌─────────────────────────────────────┐
 │ LLM Settings                        │
 ├─────────────────────────────────────┤
-│ Provider: (•) LM Studio             │
-│           ( ) OpenRouter            │
-│                                     │
 │ Model: [llama-3-8b-instruct ▼]     │
 │                                     │
 │ Advanced:                           │
@@ -1520,7 +1580,7 @@ function displaySummary(summary) {
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ Negotiating: Laptop (Need: 2 units) | Budget: $1000 - $3000   │
+│ Negotiating: Laptop (Need: 2 units)                           │
 ├────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌──────────────────┐  ┌──────────────────────────────────┐   │
@@ -1553,12 +1613,6 @@ function displaySummary(summary) {
 ┌────────────────────────────────────────────────────────────────┐
 │ Shopping Complete! 🎉                                          │
 ├────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Budget Overview                                                │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │ Initial: $3000 | Spent: $2160 | Remaining: $840          │ │
-│  │ ████████████████████████░░░░░░░░░░  72%                  │ │
-│  └──────────────────────────────────────────────────────────┘ │
 │                                                                 │
 │  Purchases (1)                                                  │
 │  ┌──────────────────────────────────────────────────────────┐ │
@@ -1740,9 +1794,7 @@ const appState = {
 | `NEGOTIATION_ALREADY_ACTIVE` | 409 | Attempted to start active negotiation | Show current state |
 | `MAX_SELLERS_EXCEEDED` | 400 | >10 sellers submitted | Show limit message |
 | `LLM_TIMEOUT` | 500 | LLM took too long | Retry or skip agent |
-| `LLM_PROVIDER_UNAVAILABLE` | 503 | Can't reach LM Studio/OpenRouter | Show connection error |
-| `INVALID_API_KEY` | 400 | OpenRouter API key invalid | Prompt for new key |
-| `BUDGET_CONSTRAINT_VIOLATION` | 422 | Purchase exceeds budget | Show budget error |
+| `LLM_PROVIDER_UNAVAILABLE` | 503 | Can't reach LM Studio | Show connection error |
 | `INSUFFICIENT_INVENTORY` | 422 | Seller out of stock | Show availability error |
 
 ### 9.4 Frontend Error Handling Strategy
@@ -1922,17 +1974,11 @@ settings = Settings()
 
 ### Phase 2: LLM Integration (Days 3-4)
 
-**LLM Providers:**
-- [ ] Create abstract LLMProvider class
+**LLM Integration:**
 - [ ] Implement LMStudioAdapter
   - [ ] Connection testing
   - [ ] Streaming support
   - [ ] Error handling
-- [ ] Implement OpenRouterAdapter
-  - [ ] API key validation
-  - [ ] Batch request handling
-  - [ ] Rate limiting
-- [ ] Build LLMProviderFactory
 
 **Agent Prompts:**
 - [ ] Design buyer prompt template
@@ -2398,7 +2444,6 @@ CORS_ORIGINS = [
 | Validation errors | 400 on initialize | Check price constraints (cost < least < selling) |
 | Session not found | 404 on queries | Session may have expired (1hr timeout) |
 | Slow responses | Long wait times | Check LLM model size, consider smaller model |
-| OpenRouter 401 | API key invalid | Verify OPENROUTER_API_KEY in .env |
 
 ---
 
