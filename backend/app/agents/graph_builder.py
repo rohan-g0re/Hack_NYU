@@ -64,6 +64,9 @@ class NegotiationGraph:
             random.seed(room_state.seed)
         
         room_state.status = "active"
+        logger.info(f"Starting negotiation graph for room {room_state.room_id}")
+        logger.info(f"Max rounds: {self.max_rounds}, Current round: {room_state.current_round}")
+        logger.info(f"Number of sellers: {len(room_state.sellers)}")
         
         # Emit connected event
         yield {
@@ -75,7 +78,7 @@ class NegotiationGraph:
         try:
             while room_state.current_round < self.max_rounds:
                 room_state.current_round += 1
-                logger.info(f"Starting round {room_state.current_round}/{self.max_rounds}")
+                logger.info(f"=== Starting round {room_state.current_round}/{self.max_rounds} ===")
                 
                 # Node 1: Buyer Turn
                 buyer_result = await self._buyer_turn_node(room_state)
@@ -185,6 +188,7 @@ class NegotiationGraph:
         HOW: Instantiate BuyerAgent, call run_turn, record message
         """
         try:
+            logger.info(f"Creating buyer agent for room {room_state.room_id}")
             buyer_agent = BuyerAgent(
                 provider=self.provider,
                 constraints=room_state.buyer_constraints,
@@ -192,7 +196,13 @@ class NegotiationGraph:
                 max_tokens=self.max_tokens
             )
             
+            logger.info(f"Running buyer turn for round {room_state.current_round}")
             result = await buyer_agent.run_turn(room_state)
+            logger.info(f"Buyer agent returned result: {result}")
+            
+            if not result:
+                logger.error("Buyer agent returned None/empty result")
+                return None
             
             # Record message in history
             message: Message = {
@@ -208,11 +218,12 @@ class NegotiationGraph:
             }
             
             room_state.conversation_history.append(message)
+            logger.info(f"Buyer message added to history: {result['message'][:100]}")
             
             return result
             
         except Exception as e:
-            logger.error(f"Buyer turn error: {e}")
+            logger.error(f"Buyer turn error: {e}", exc_info=True)
             return None
     
     def _message_routing_node(

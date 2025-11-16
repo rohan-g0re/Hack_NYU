@@ -160,6 +160,14 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
             least_price: 950,
             quantity_available: 5,
           },
+          {
+            item_id: 'item_002',
+            item_name: 'Mouse',
+            cost_price: 10,
+            selling_price: 30,
+            least_price: 20,
+            quantity_available: 50,
+          },
         ],
         profile: {
           priority: SellerPriority.MAXIMIZE_PROFIT,
@@ -176,6 +184,14 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
             selling_price: 1180,
             least_price: 1020,
             quantity_available: 8,
+          },
+          {
+            item_id: 'item_002',
+            item_name: 'Mouse',
+            cost_price: 12,
+            selling_price: 28,
+            least_price: 18,
+            quantity_available: 100,
           },
         ],
         profile: {

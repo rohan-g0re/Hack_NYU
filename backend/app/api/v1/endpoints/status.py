@@ -51,7 +51,7 @@ async def llm_status():
         }
     
     # Get database status
-    db_status = await ping_database()
+    db_status = ping_database()
     
     return {
         "llm": llm_dict,
@@ -79,7 +79,7 @@ async def health_check():
         logger.error(f"Health check LLM failed: {e}")
         llm_available = False
     
-    db_status = await ping_database()
+    db_status = ping_database()
     db_available = db_status["available"]
     
     # Overall health is healthy if both components are up

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useNegotiation } from '@/store/negotiationStore';
 import { useSession } from '@/store/sessionStore';
@@ -24,7 +24,8 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showDecisionModal, setShowDecisionModal] = useState(false);
-  const [streamStarted, setStreamStarted] = useState(false);
+  const [negotiationStarted, setNegotiationStarted] = useState(false);
+  const initAttemptedRef = useRef(false);
 
   const room = negotiationRooms.find((r) => r.room_id === roomId);
   const negotiationState = rooms[roomId];
@@ -36,6 +37,13 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
       return;
     }
 
+    // Prevent duplicate initialization (React Strict Mode runs effects twice in dev)
+    if (initAttemptedRef.current) {
+      return;
+    }
+    
+    initAttemptedRef.current = true;
+
     const initNegotiation = async () => {
       // Initialize room state
       initializeRoom(roomId, MAX_NEGOTIATION_ROUNDS);
@@ -45,22 +53,33 @@ export default function NegotiationRoomPage({ params }: { params: { roomId: stri
       setLoading(true);
       try {
         await startNegotiation(roomId);
-        setStreamStarted(true);
+        console.log('Negotiation started successfully - enabling SSE connection');
+        
+        // Small delay to ensure backend has fully initialized the room
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setNegotiationStarted(true); // Signal SSE to connect
       } catch (err: any) {
-        setError(err.message || 'Failed to start negotiation');
+        // 409 Conflict means negotiation is already active - that's fine!
+        if (err.status === 409 || err.code === 'NEGOTIATION_ALREADY_ACTIVE') {
+          console.log('Negotiation already active, continuing...');
+          await new Promise(resolve => setTimeout(resolve, 100));
+          setNegotiationStarted(true); // Still enable SSE
+        } else {
+          console.error('Failed to start negotiation:', err);
+          setError(err.message || 'Failed to start negotiation');
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    if (!streamStarted) {
-      initNegotiation();
-    }
-  }, [roomId, room, router, initializeRoom, setActiveRoom, streamStarted]);
+    initNegotiation();
+  }, [roomId, room, router, initializeRoom, setActiveRoom]);
 
-  // Setup SSE stream
+  // Setup SSE stream - ONLY after negotiation has started
   useNegotiationStream({
     roomId,
+    enabled: negotiationStarted, // Wait for start to complete
     onError: (err) => setError(err),
     onComplete: () => setShowDecisionModal(true),
   });

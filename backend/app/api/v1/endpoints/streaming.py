@@ -15,6 +15,8 @@ from datetime import datetime
 
 from ....core.session_manager import active_rooms
 from ....core.config import settings
+from ....core.database import get_db
+from ....core.models import NegotiationRun
 from ....agents.graph_builder import NegotiationGraph
 from ....llm.provider_factory import get_provider
 from ....utils.exceptions import RoomNotFoundError
@@ -129,6 +131,18 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
                 "timestamp": datetime.now().isoformat()
             })
         }
+
+        # Persist completion to DB (status, rounds, ended_at)
+        try:
+            with get_db() as db:
+                run = db.query(NegotiationRun).filter(NegotiationRun.id == room_id).first()
+                if run:
+                    run.status = "completed"
+                    run.current_round = getattr(room_state, "current_round", run.current_round)
+                    run.ended_at = datetime.now()
+                    db.commit()
+        except Exception as e:
+            logger.error(f"Failed to persist completion for room {room_id}: {e}")
         
     except Exception as e:
         logger.error(f"Error in SSE stream for room {room_id}: {e}")
@@ -143,6 +157,13 @@ async def negotiation_event_generator(room_id: str) -> AsyncIterator[dict]:
         }
     finally:
         logger.info(f"SSE stream ended for room {room_id}")
+        # Cleanup in-memory state to allow clean restarts
+        try:
+            if room_id in active_rooms:
+                del active_rooms[room_id]
+                logger.info(f"Removed room {room_id} from active_rooms")
+        except Exception as e:
+            logger.error(f"Failed to cleanup active room {room_id}: {e}")
 
 
 @router.get("/negotiation/{room_id}/stream")

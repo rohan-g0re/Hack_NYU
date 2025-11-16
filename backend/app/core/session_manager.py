@@ -333,11 +333,18 @@ class SessionManager:
                 return {"error": "Run not found"}
             
             if run.status != 'pending':
-                return {"error": f"Run already {run.status}"}
+                # Allow restarting completed/aborted negotiations
+                if run.status in ['completed', 'aborted']:
+                    logger.info(f"Restarting negotiation for room {room_id}")
+                    run.current_round = 0  # Reset round counter
+                    run.status = 'pending'
+                else:
+                    return {"error": f"Run already {run.status}"}
             
             # Update status
             run.status = 'active'
             run.started_at = datetime.now()
+            run.current_round = 0  # Always reset to 0 when starting
             db.commit()
             
             # Create NegotiationRoomState for in-memory cache
@@ -346,6 +353,10 @@ class SessionManager:
             room_state = self._create_room_state_from_run(db, run)
             if room_state:
                 active_rooms[room_id] = (room_state, datetime.now())
+                logger.info(f"Room {room_id} added to active_rooms (sellers: {len(room_state.sellers)})")
+            else:
+                logger.error(f"Failed to create room state for {room_id} - room_state is None!")
+                return {"error": "Failed to initialize room state"}
             
             return {
                 "run_id": room_id,
@@ -355,12 +366,16 @@ class SessionManager:
     
     def _create_room_state_from_run(self, db: Session, run: NegotiationRun) -> Optional[NegotiationRoomState]:
         """Create NegotiationRoomState from DB run."""
+        logger.info(f"Creating room state from run {run.id}")
+        
         buyer_item = db.query(BuyerItem).filter(BuyerItem.id == run.buyer_item_id).first()
         if not buyer_item:
+            logger.error(f"Buyer item {run.buyer_item_id} not found for run {run.id}")
             return None
         
         buyer = db.query(Buyer).filter(Buyer.id == buyer_item.buyer_id).first()
         if not buyer:
+            logger.error(f"Buyer {buyer_item.buyer_id} not found")
             return None
         
         # Get participants
@@ -368,8 +383,12 @@ class SessionManager:
             NegotiationParticipant.negotiation_run_id == run.id
         ).all()
         
+        logger.info(f"Found {len(participants)} participants for run {run.id}")
+        
         seller_ids = [p.seller_id for p in participants]
         sellers_orm = db.query(Seller).filter(Seller.id.in_(seller_ids)).all()
+        
+        logger.info(f"Loaded {len(sellers_orm)} sellers from DB")
         
         # Convert to Seller models
         sellers = []
@@ -408,17 +427,20 @@ class SessionManager:
             max_price_per_unit=buyer_item.max_price_per_unit
         )
         
-        return NegotiationRoomState(
+        room_state = NegotiationRoomState(
             room_id=run.id,
             buyer_id=buyer.id,
             buyer_name=buyer.name,
             buyer_constraints=buyer_constraints,
             sellers=sellers,
             conversation_history=[],
-            current_round=0,
+            current_round=run.current_round,  # Use DB value (should be 0 after reset)
             max_rounds=run.max_rounds,
             status='active'
         )
+        
+        logger.info(f"Successfully created room state for {run.id}: {len(sellers)} sellers, round {run.current_round}/{run.max_rounds}")
+        return room_state
     
     def record_message(
         self,

@@ -55,16 +55,20 @@ async def start_negotiation(room_id: str) -> Dict:
         RoomNotFoundError: If room doesn't exist
         NegotiationAlreadyActiveError: If already active
     """
-    logger.info(f"Starting negotiation for room {room_id}")
+    logger.info(f"POST /negotiation/{room_id}/start - Starting negotiation")
+    logger.info(f"Current active_rooms: {list(active_rooms.keys())}")
     
     # Check if already active
     if room_id in active_rooms:
+        logger.warning(f"Room {room_id} already in active_rooms, raising 409")
         raise NegotiationAlreadyActiveError(
             message=f"Negotiation {room_id} is already active",
             code="NEGOTIATION_ALREADY_ACTIVE"
         )
     
+    logger.info(f"Calling session_manager.start_negotiation for {room_id}")
     result = session_manager.start_negotiation(room_id)
+    logger.info(f"start_negotiation returned: {result}")
     
     if "error" in result:
         if "not found" in result["error"].lower():

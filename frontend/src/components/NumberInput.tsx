@@ -19,7 +19,8 @@ export function NumberInput({
   onDecrement,
   ...props
 }: NumberInputProps) {
-  const inputId = id || `number-input-${Math.random().toString(36).substr(2, 9)}`;
+  const generatedId = React.useId();
+  const inputId = id || generatedId;
 
   return (
     <div className="w-full">

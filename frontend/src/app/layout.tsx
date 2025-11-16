@@ -4,6 +4,7 @@ import '@/styles/globals.css';
 import { SessionProvider } from '@/store/sessionStore';
 import { ConfigProvider } from '@/store/configStore';
 import { NegotiationProvider } from '@/store/negotiationStore';
+import { Header } from '@/components/Header';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -23,6 +24,7 @@ export default function RootLayout({
         <SessionProvider>
           <ConfigProvider>
             <NegotiationProvider>
+              <Header />
               {children}
             </NegotiationProvider>
           </ConfigProvider>
