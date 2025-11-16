@@ -24,6 +24,7 @@ from ..services.message_router import parse_mentions
 from ..agents.prompts import render_buyer_prompt
 from ..utils.exceptions import BuyerAgentError
 from ..utils.logger import get_logger
+from ..utils.word_limit import enforce_word_limit, count_words, MAX_WORDS_PER_MESSAGE
 from ..core.config import settings
 
 logger = get_logger(__name__)
@@ -86,6 +87,10 @@ class BuyerAgent:
             # Filter conversation to buyer-visible messages
             visible_history = filter_for_buyer(room_state.message_history, room_state.buyer_id)
             
+            # Fast dev mode: trim history to last 4 messages (2 exchanges) to reduce context
+            if room_state.metadata.get("fast_dev", False):
+                visible_history = visible_history[-4:]
+            
             # Render prompt
             messages = render_buyer_prompt(room_state, visible_history)
             
@@ -105,6 +110,16 @@ class BuyerAgent:
             
             if was_sanitized:
                 logger.info(f"Buyer output sanitized in room {room_state.room_id}")
+            
+            # Enforce 30-word limit
+            word_count = count_words(sanitized_text)
+            if word_count > MAX_WORDS_PER_MESSAGE:
+                logger.warning(
+                    f"Buyer message exceeded word limit: {word_count} words "
+                    f"(limit: {MAX_WORDS_PER_MESSAGE}), truncating"
+                )
+                sanitized_text = enforce_word_limit(sanitized_text, MAX_WORDS_PER_MESSAGE)
+                was_sanitized = True
             
             # Parse mentions
             mentioned_sellers = parse_mentions(sanitized_text, room_state.seller_profiles)

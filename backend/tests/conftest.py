@@ -82,7 +82,8 @@ def mock_settings():
         mock.LLM_ENABLE_OPENROUTER = False
         mock.OPENROUTER_API_KEY = ""
         mock.OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-        mock.CORS_ORIGINS = ["http://localhost:3000"]
+        mock.CORS_ORIGINS = "http://localhost:3000"
+        mock.cors_origins_list = ["http://localhost:3000"]
         mock.LOG_LEVEL = "DEBUG"
         mock.LOG_FILE = "./test_logs/app.log"
         yield mock

@@ -6,7 +6,7 @@ WHY: Consistent typing across agents, graph, and future persistence
 HOW: Pydantic v2 models compatible with FastAPI schemas
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Any
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -20,9 +20,27 @@ class BuyerConstraints(BaseModel):
     quantity_needed: int = Field(ge=1)
     min_price_per_unit: float = Field(ge=0.0)
     max_price_per_unit: float = Field(gt=0.0)
-    budget_ceiling: float | None = Field(default=None, ge=0.0)
+    budget_per_item: float | None = Field(
+        default=None, 
+        ge=0.0,
+        description="Individual budget ceiling for this specific item (total cost = price * quantity)"
+    )
     tone: Literal["neutral", "friendly", "assertive"] = "neutral"
     priority_notes: str = ""
+    
+    @model_validator(mode='before')
+    @classmethod
+    def handle_budget_ceiling_alias(cls, data):
+        """Handle backward compatibility: budget_ceiling -> budget_per_item."""
+        if isinstance(data, dict):
+            if 'budget_ceiling' in data and 'budget_per_item' not in data:
+                data['budget_per_item'] = data.pop('budget_ceiling')
+        return data
+    
+    @property
+    def budget_ceiling(self) -> float | None:
+        """Backward compatibility property."""
+        return self.budget_per_item
     
     @field_validator("max_price_per_unit")
     @classmethod
@@ -106,7 +124,7 @@ class NegotiationRoomState(BaseModel):
     room_id: str = Field(default_factory=lambda: str(uuid4()))
     seed: int = Field(default=42)
     current_round: int = Field(default=0, ge=0)
-    max_rounds: int = Field(default=10, ge=1)
+    max_rounds: int = Field(default=5, ge=1)  # Now means exchanges per seller (default 5)
     
     buyer_id: str = "buyer"
     buyer_constraints: BuyerConstraints
@@ -118,6 +136,9 @@ class NegotiationRoomState(BaseModel):
     offer_history: list[Offer] = Field(default_factory=list)
     
     active_sellers: list[str] = Field(default_factory=list)
+    current_seller_index: int = Field(default=0, ge=0)  # Which seller in current round sequence
+    exchanges_completed: dict[str, int] = Field(default_factory=dict)  # seller_id → exchange count
+    
     status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
     
     created_at: datetime = Field(default_factory=datetime.utcnow)

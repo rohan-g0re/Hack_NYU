@@ -30,7 +30,7 @@ class TestBuyerPromptRendering:
             quantity_needed=100,
             min_price_per_unit=5.0,
             max_price_per_unit=10.0,
-            budget_ceiling=950.0,
+            budget_per_item=950.0,
             tone="neutral"
         )
         

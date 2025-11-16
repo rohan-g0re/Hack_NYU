@@ -29,13 +29,26 @@ logger = get_logger(__name__)
 class LMStudioProvider:
     """LM Studio LLM provider with retry logic and streaming."""
     
-    def __init__(self):
-        """Initialize LM Studio provider with httpx client."""
+    def __init__(
+        self,
+        *,
+        timeout: int | None = None,
+        max_retries: int | None = None,
+        retry_delay: int | None = None,
+    ):
+        """
+        Initialize LM Studio provider with httpx client.
+        
+        Args:
+            timeout: Override timeout (seconds). If None, uses settings.LM_STUDIO_TIMEOUT
+            max_retries: Override max retries. If None, uses settings.LLM_MAX_RETRIES
+            retry_delay: Override retry delay (seconds). If None, uses settings.LLM_RETRY_DELAY
+        """
         self.base_url = settings.LM_STUDIO_BASE_URL
         self.default_model = settings.LM_STUDIO_DEFAULT_MODEL
-        self.timeout = settings.LM_STUDIO_TIMEOUT
-        self.max_retries = settings.LLM_MAX_RETRIES
-        self.retry_delay = settings.LLM_RETRY_DELAY
+        self.timeout = timeout if timeout is not None else settings.LM_STUDIO_TIMEOUT
+        self.max_retries = max_retries if max_retries is not None else settings.LLM_MAX_RETRIES
+        self.retry_delay = retry_delay if retry_delay is not None else settings.LLM_RETRY_DELAY
         
         # Create async client with connection pooling
         self.client = httpx.AsyncClient(

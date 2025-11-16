@@ -71,7 +71,7 @@ class NegotiationGraph:
         
         WHAT: Execute negotiation loop with event emission
         WHY: Drive conversation to decision or max rounds
-        HOW: Buyer turn → route → parallel sellers → decision check → repeat
+        HOW: Sequential seller exchanges per round (buyer→seller1, seller1→buyer, buyer→seller2, etc.)
         
         Args:
             room_state: Negotiation state (modified in place)
@@ -84,111 +84,87 @@ class NegotiationGraph:
         
         logger.info(
             f"Starting negotiation in room {room_state.room_id}, "
-            f"max_rounds={room_state.max_rounds}, seed={room_state.seed}"
+            f"exchanges_per_seller={room_state.max_rounds}, "
+            f"sellers={len(room_state.active_sellers)}, seed={room_state.seed}"
         )
         
         room_state.status = "in_progress"
         
+        # Initialize exchange tracking
+        for seller_id in room_state.active_sellers:
+            room_state.exchanges_completed[seller_id] = 0
+        
         try:
-            # Main negotiation loop
-            while room_state.current_round < room_state.max_rounds:
-                logger.debug(f"Round {room_state.current_round + 1}/{room_state.max_rounds}")
+            # Outer loop: rounds (exchanges per seller)
+            for exchange_round in range(room_state.max_rounds):
+                room_state.current_round = exchange_round
                 
-                # === BUYER TURN ===
-                try:
-                    buyer_result = await self.buyer_agent.run_turn(room_state)
+                logger.debug(f"Round {exchange_round + 1}/{room_state.max_rounds}")
+                
+                # Inner loop: cycle through sellers sequentially
+                for seller_index, seller_id in enumerate(room_state.active_sellers):
+                    room_state.current_seller_index = seller_index
                     
-                    # Add buyer message to history
-                    buyer_msg = Message(
-                        sender_id=room_state.buyer_id,
-                        sender_type="buyer",
-                        content=buyer_result.message,
-                        round_number=room_state.current_round,
-                        visible_to=["all"]
-                    )
-                    room_state.message_history.append(buyer_msg)
-                    
-                    # Emit buyer message event
-                    yield NegotiationEvent(
-                        type="buyer_message",
-                        data={
-                            "room_id": room_state.room_id,
-                            "round": room_state.current_round,
-                            "message_id": buyer_msg.message_id,
-                            "content": buyer_result.message,
-                            "mentioned_sellers": buyer_result.mentioned_sellers,
-                            "timestamp": buyer_msg.timestamp.isoformat()
-                        }
+                    logger.debug(
+                        f"Round {exchange_round + 1}/{room_state.max_rounds}, "
+                        f"Seller {seller_index + 1}/{len(room_state.active_sellers)}: {seller_id}"
                     )
                     
-                except BuyerAgentError as e:
-                    logger.error(f"Buyer agent error: {e}")
-                    yield NegotiationEvent(
-                        type="error",
-                        data={
-                            "room_id": room_state.room_id,
-                            "round": room_state.current_round,
-                            "agent": "buyer",
-                            "error": str(e),
-                            "recoverable": False
-                        }
-                    )
-                    room_state.status = "failed"
-                    break
-                
-                # === MESSAGE ROUTING ===
-                target_sellers = select_targets(
-                    buyer_result.mentioned_sellers,
-                    room_state.active_sellers,
-                    fallback_to_all=True
-                )
-                
-                if not target_sellers:
-                    logger.warning("No target sellers for routing")
-                    # Continue to next round
-                    room_state.current_round += 1
-                    continue
-                
-                # === PARALLEL SELLER RESPONSES ===
-                seller_tasks = [
-                    self._seller_response_task(seller_id, room_state)
-                    for seller_id in target_sellers
-                ]
-                
-                seller_results = await asyncio.gather(*seller_tasks, return_exceptions=True)
-                
-                # Process seller results
-                for seller_id, result in zip(target_sellers, seller_results):
-                    if isinstance(result, Exception):
-                        # Seller failed
-                        logger.error(f"Seller {seller_id} error: {result}")
+                    # === BUYER TURN (addressing current seller) ===
+                    try:
+                        buyer_result = await self.buyer_agent.run_turn(room_state)
                         
+                        # Add buyer message to history
+                        buyer_msg = Message(
+                            sender_id=room_state.buyer_id,
+                            sender_type="buyer",
+                            content=buyer_result.message,
+                            round_number=exchange_round,
+                            visible_to=["all"],
+                            metadata={"target_seller": seller_id, "seller_index": seller_index}
+                        )
+                        room_state.message_history.append(buyer_msg)
+                        
+                        # Emit buyer message event
+                        yield NegotiationEvent(
+                            type="buyer_message",
+                            data={
+                                "room_id": room_state.room_id,
+                                "round": exchange_round,
+                                "seller_id": seller_id,
+                                "seller_index": seller_index,
+                                "message_id": buyer_msg.message_id,
+                                "content": buyer_result.message,
+                                "timestamp": buyer_msg.timestamp.isoformat()
+                            }
+                        )
+                        
+                    except BuyerAgentError as e:
+                        logger.error(f"Buyer agent error: {e}")
                         yield NegotiationEvent(
                             type="error",
                             data={
                                 "room_id": room_state.room_id,
-                                "round": room_state.current_round,
-                                "agent": "seller",
+                                "round": exchange_round,
+                                "agent": "buyer",
                                 "seller_id": seller_id,
-                                "error": str(result),
-                                "recoverable": True
+                                "error": str(e),
+                                "recoverable": False
                             }
                         )
-                        
-                        # Remove from active sellers if persistent failure
-                        if seller_id in room_state.active_sellers:
-                            room_state.active_sellers.remove(seller_id)
+                        room_state.status = "failed"
+                        return
                     
-                    else:
-                        # Seller succeeded
-                        seller_response = result
+                    # === SELLER RESPONSE (only current seller) ===
+                    try:
+                        seller_response = await self._seller_response_task(seller_id, room_state)
                         
                         # Add seller message to history
                         seller_msg = Message(
                             sender_id=seller_id,
                             sender_type="seller",
                             content=seller_response.message,
-                            round_number=room_state.current_round,
+                            round_number=exchange_round,
                             visible_to=["all", f"seller:{seller_id}"]
                         )
                         room_state.message_history.append(seller_msg)
@@ -197,13 +173,17 @@ class NegotiationGraph:
                         if seller_response.offer:
                             room_state.offer_history.append(seller_response.offer)
                         
+                        # Increment exchange counter
+                        room_state.exchanges_completed[seller_id] += 1
+                        
                         # Emit seller response event
                         yield NegotiationEvent(
                             type="seller_response",
                             data={
                                 "room_id": room_state.room_id,
-                                "round": room_state.current_round,
+                                "round": exchange_round,
                                 "seller_id": seller_id,
+                                "exchange_number": room_state.exchanges_completed[seller_id],
                                 "message_id": seller_msg.message_id,
                                 "content": seller_response.message,
                                 "offer": {
@@ -216,12 +196,44 @@ class NegotiationGraph:
                                 "timestamp": seller_msg.timestamp.isoformat()
                             }
                         )
+                        
+                    except Exception as e:
+                        logger.error(f"Seller {seller_id} error: {e}")
+                        yield NegotiationEvent(
+                            type="error",
+                            data={
+                                "room_id": room_state.room_id,
+                                "round": exchange_round,
+                                "agent": "seller",
+                                "seller_id": seller_id,
+                                "error": str(e),
+                                "recoverable": True
+                            }
+                        )
+                        # Continue to next seller (don't fail entire negotiation)
+                        continue
+                    
+                    # === HEARTBEAT ===
+                    yield NegotiationEvent(
+                        type="heartbeat",
+                        data={
+                            "room_id": room_state.room_id,
+                            "round": exchange_round,
+                            "current_seller": seller_id,
+                            "seller_index": seller_index,
+                            "exchanges_completed": room_state.exchanges_completed.copy(),
+                            "offers_count": len(room_state.offer_history),
+                            "messages_count": len(room_state.message_history)
+                        }
+                    )
                 
-                # === DECISION CHECK ===
+                # End of seller loop for this round
+                
+                # === DECISION CHECK (after all sellers in this round) ===
                 decision = self._check_decision(room_state)
                 
                 if decision:
-                    # Negotiation complete
+                    # Negotiation complete - early exit after full round
                     outcome = decision
                     room_state.status = "completed"
                     
@@ -229,7 +241,8 @@ class NegotiationGraph:
                         type="negotiation_complete",
                         data={
                             "room_id": room_state.room_id,
-                            "total_rounds": room_state.current_round + 1,
+                            "total_rounds": exchange_round + 1,
+                            "exchanges_completed": room_state.exchanges_completed.copy(),
                             "winner_id": outcome.winner_id,
                             "winning_offer": {
                                 "offer_id": outcome.winning_offer.offer_id,
@@ -247,30 +260,15 @@ class NegotiationGraph:
                         f"Negotiation completed in room {room_state.room_id}: "
                         f"{outcome.reason}"
                     )
-                    break
-                
-                # === HEARTBEAT ===
-                yield NegotiationEvent(
-                    type="heartbeat",
-                    data={
-                        "room_id": room_state.room_id,
-                        "round": room_state.current_round,
-                        "active_sellers": room_state.active_sellers.copy(),
-                        "offers_count": len(room_state.offer_history),
-                        "messages_count": len(room_state.message_history)
-                    }
-                )
-                
-                # Increment round
-                room_state.current_round += 1
+                    return  # Early exit after completing full round
             
             # Max rounds reached without decision
             if room_state.status == "in_progress":
                 outcome = NegotiationOutcome(
                     winner_id=None,
                     winning_offer=None,
-                    total_rounds=room_state.current_round,
-                    reason="Max rounds reached without acceptable offer"
+                    total_rounds=room_state.max_rounds,
+                    reason=f"Max rounds reached ({room_state.max_rounds} rounds with all sellers), no acceptable offer"
                 )
                 room_state.status = "completed"
                 
@@ -278,7 +276,8 @@ class NegotiationGraph:
                     type="negotiation_complete",
                     data={
                         "room_id": room_state.room_id,
-                        "total_rounds": room_state.current_round,
+                        "total_rounds": room_state.max_rounds,
+                        "exchanges_completed": room_state.exchanges_completed.copy(),
                         "winner_id": None,
                         "winning_offer": None,
                         "reason": outcome.reason,
@@ -286,7 +285,7 @@ class NegotiationGraph:
                     }
                 )
                 
-                logger.info(f"Negotiation timed out in room {room_state.room_id}")
+                logger.info(f"Negotiation completed {room_state.max_rounds} rounds in room {room_state.room_id}")
         
         except Exception as e:
             logger.error(f"Unexpected error in negotiation graph: {e}", exc_info=True)
@@ -367,9 +366,9 @@ class NegotiationGraph:
         best_offer = min(valid_offers, key=lambda o: o.price)
         
         # Check budget constraint if present
-        if constraints.budget_ceiling:
+        if constraints.budget_per_item:
             total_cost = best_offer.price * best_offer.quantity
-            if total_cost > constraints.budget_ceiling:
+            if total_cost > constraints.budget_per_item:
                 return None
         
         # Accept best offer

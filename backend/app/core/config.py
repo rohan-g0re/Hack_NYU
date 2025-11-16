@@ -35,13 +35,25 @@ class Settings(BaseSettings):
     LLM_DEFAULT_TEMPERATURE: float = 0.7
     LLM_DEFAULT_MAX_TOKENS: int = 500
     
+    # Fast Dev Mode Configuration (optional overrides)
+    LM_STUDIO_FAST_TIMEOUT: int | None = None  # If None, defaults to 12 in fast mode (vs 30s normal)
+    LLM_FAST_MAX_RETRIES: int | None = None  # If None, defaults to 1 in fast mode (vs 3 normal)
+    LLM_FAST_RETRY_DELAY: int | None = None  # If None, defaults to 1 in fast mode (vs 2 normal)
+    
     # OpenRouter Configuration
     LLM_ENABLE_OPENROUTER: bool = False
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ORIGINS string to list."""
+        if isinstance(self.CORS_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return self.CORS_ORIGINS if isinstance(self.CORS_ORIGINS, list) else []
     
     # Logging
     LOG_LEVEL: str = "INFO"

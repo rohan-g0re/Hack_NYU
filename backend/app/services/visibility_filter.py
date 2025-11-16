@@ -41,6 +41,9 @@ def calculate_visible_scope(agent_id: str, agent_type: Literal["buyer", "seller"
         scopes.append("system")
         scopes.append("buyer")
         scopes.append("seller")
+        # Add wildcard to match all specific IDs
+        scopes.append("buyer:*")
+        scopes.append("seller:*")
     
     return scopes
 
@@ -69,7 +72,14 @@ def is_visible(message: Message, agent_scope: List[str]) -> bool:
         if visibility_token in agent_scope:
             return True
         
-        # Handle wildcard patterns like "seller:*"
+        # Handle wildcard patterns in agent scope (e.g., agent has "seller:*", message wants "seller:s1")
+        for scope in agent_scope:
+            if scope.endswith(":*"):
+                prefix = scope[:-2]
+                if visibility_token.startswith(prefix + ":"):
+                    return True
+        
+        # Handle wildcard patterns in message visibility (e.g., message wants "seller:*", agent has "seller:s1")
         if visibility_token.endswith(":*"):
             prefix = visibility_token[:-2]
             if any(scope.startswith(prefix + ":") for scope in agent_scope):
@@ -139,4 +149,39 @@ def filter_for_seller(history: List[Message], seller_id: str) -> List[Message]:
         Messages visible to this seller
     """
     return filter_conversation(history, seller_id, "seller")
+
+
+def filter_for_current_exchange(
+    history: List[Message],
+    current_seller_id: str,
+    buyer_id: str
+) -> List[Message]:
+    """
+    Filter to show only messages relevant to current seller exchange.
+    
+    WHAT: Isolate conversation to only buyer<->current_seller messages
+    WHY: Prevent buyer from seeing other sellers' responses during sequential rounds
+    HOW: Filter by sender_id and metadata target_seller field
+    
+    Args:
+        history: All messages in room
+        current_seller_id: The seller currently being negotiated with
+        buyer_id: The buyer's ID
+    
+    Returns:
+        Filtered message list showing only current seller's conversation
+    """
+    filtered = []
+    for msg in history:
+        # Include buyer messages directed to this seller
+        if msg.sender_id == buyer_id and msg.metadata.get("target_seller") == current_seller_id:
+            filtered.append(msg)
+        # Include this seller's responses
+        elif msg.sender_id == current_seller_id and msg.sender_type == "seller":
+            filtered.append(msg)
+        # Include system messages (always visible)
+        elif msg.sender_type == "system":
+            filtered.append(msg)
+    
+    return filtered
 

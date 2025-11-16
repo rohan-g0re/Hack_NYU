@@ -33,6 +33,14 @@ def render_buyer_prompt(room_state: NegotiationRoomState, visible_history: List[
     """
     constraints = room_state.buyer_constraints
     
+    # Get current seller context
+    current_seller_id = None
+    current_seller_name = None
+    if room_state.active_sellers and room_state.current_seller_index < len(room_state.active_sellers):
+        current_seller_id = room_state.active_sellers[room_state.current_seller_index]
+        profile = room_state.seller_profiles.get(current_seller_id)
+        current_seller_name = profile.display_name if profile else current_seller_id
+    
     # Build system message with constraints
     system_content = f"""You are the Buyer negotiating to purchase items from sellers.
 
@@ -41,19 +49,37 @@ def render_buyer_prompt(room_state: NegotiationRoomState, visible_history: List[
 - Quantity needed: {constraints.quantity_needed} units
 - Price range per unit: ${constraints.min_price_per_unit:.2f} - ${constraints.max_price_per_unit:.2f}"""
     
-    if constraints.budget_ceiling:
-        system_content += f"\n- Total budget ceiling: ${constraints.budget_ceiling:.2f}"
+    if constraints.budget_per_item:
+        system_content += f"\n- Budget for this item: ${constraints.budget_per_item:.2f} (total cost must not exceed this)"
+    
+    system_content += f"\n- Communication style: {constraints.tone}"
+    
+    # Add current negotiation context
+    if current_seller_name and current_seller_id:
+        exchanges_done = room_state.exchanges_completed.get(current_seller_id, 0)
+        system_content += f"""
+
+**Current Negotiation:**
+- You are NOW negotiating with: {current_seller_name}
+- Exchange {exchanges_done + 1} of {room_state.max_rounds} with this seller
+- Address this seller directly in your message"""
+    
+    # Fast dev mode: stricter instructions
+    is_fast_dev = room_state.metadata.get("fast_dev", False)
+    
+    if is_fast_dev:
+        system_content = "You are in FAST DEV MODE. Respond in at most 30 words. Do NOT use <think> or any hidden reasoning sections.\n\n" + system_content
     
     system_content += f"""
-- Communication style: {constraints.tone}
 
 **Instructions:**
-1. Reference sellers using @SellerName when you want to address them
-2. Negotiate firmly but professionally within your price range
-3. Never reveal internal information like seller costs or least prices
-4. Keep responses concise and focused (under 200 words)
-5. Evaluate offers based on price, quantity, and seller responsiveness
-6. When you're ready to accept an offer, clearly state your decision
+1. Negotiate with {current_seller_name or 'the current seller'} to get the best deal
+2. Keep responses extremely concise - MAXIMUM 30 words per message
+3. Do NOT use <think> or any hidden reasoning sections - reply directly in natural language
+4. Do NOT repeat information you already know or have mentioned - focus on NEW information, questions, or decisions
+5. Never reveal internal information like seller costs or least prices
+6. Evaluate this seller's offer based on price, quantity, and terms
+7. You can accept an offer if it meets your constraints
 
 **Current Round:** {room_state.current_round + 1} of {room_state.max_rounds}
 """
@@ -126,6 +152,11 @@ def render_seller_prompt(
     else:
         system_content += "\n- No inventory available"
     
+    # Fast dev mode: stricter instructions
+    is_fast_dev = room_state.metadata.get("fast_dev", False)
+    if is_fast_dev:
+        system_content = "You are in FAST DEV MODE. Respond in at most 30 words. Do NOT use <think> or any hidden reasoning sections.\n\n" + system_content
+    
     system_content += """
 
 **Instructions:**
@@ -136,20 +167,22 @@ def render_seller_prompt(
    ```offer
    {"price": 10.50, "quantity": 100, "item_id": "item_name"}
    ```
-5. Keep responses under 150 words"""
+5. Keep responses extremely concise - MAXIMUM 30 words per message
+6. Do NOT use <think> or any hidden reasoning sections - reply directly in natural language
+7. Do NOT repeat information already known or mentioned - focus on NEW offers, counter-offers, or responses to the buyer's current message"""
     
     # Style-specific instructions
     if profile.speaking_style == "rude":
-        system_content += "\n6. Be blunt and transactional - no pleasantries needed"
+        system_content += "\n8. Be blunt and transactional - no pleasantries needed"
     elif profile.speaking_style == "very_sweet":
-        system_content += "\n6. Be warm, appreciative, and enthusiastic in your communication"
+        system_content += "\n8. Be warm, appreciative, and enthusiastic in your communication"
     else:
-        system_content += "\n6. Maintain a professional, balanced tone"
+        system_content += "\n8. Maintain a professional, balanced tone"
     
     if profile.priority == "maximize_profit":
-        system_content += "\n7. Focus on getting the highest price possible"
+        system_content += "\n9. Focus on getting the highest price possible"
     else:
-        system_content += "\n7. Focus on building a positive relationship, be flexible on price within reason"
+        system_content += "\n9. Focus on building a positive relationship, be flexible on price within reason"
     
     system_content += f"\n\n**Current Round:** {room_state.current_round + 1} of {room_state.max_rounds}"
     

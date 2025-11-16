@@ -24,6 +24,7 @@ from ..agents.prompts import render_seller_prompt
 from ..utils.offers import parse_offer_block
 from ..utils.exceptions import SellerAgentError
 from ..utils.logger import get_logger
+from ..utils.word_limit import enforce_word_limit, count_words, MAX_WORDS_PER_MESSAGE
 from ..core.config import settings
 
 logger = get_logger(__name__)
@@ -99,6 +100,10 @@ class SellerAgent:
                 self.profile.seller_id
             )
             
+            # Fast dev mode: trim history to last 4 messages (2 exchanges) to reduce context
+            if room_state.metadata.get("fast_dev", False):
+                visible_history = visible_history[-4:]
+            
             # Render prompt
             messages = render_seller_prompt(
                 room_state,
@@ -119,6 +124,15 @@ class SellerAgent:
             
             # Apply style enforcement
             styled_text = self._enforce_style(raw_text)
+            
+            # Enforce 30-word limit
+            word_count = count_words(styled_text)
+            if word_count > MAX_WORDS_PER_MESSAGE:
+                logger.warning(
+                    f"Seller {self.profile.seller_id} message exceeded word limit: "
+                    f"{word_count} words (limit: {MAX_WORDS_PER_MESSAGE}), truncating"
+                )
+                styled_text = enforce_word_limit(styled_text, MAX_WORDS_PER_MESSAGE)
             
             # Parse and validate offer
             offer, violations = self._extract_and_validate_offer(
