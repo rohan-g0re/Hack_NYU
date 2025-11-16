@@ -17,6 +17,7 @@ from ..models.message import Message
 from ..models.agent import BuyerConstraints
 from ..agents.buyer_agent import BuyerAgent
 from ..agents.seller_agent import SellerAgent
+from ..agents.prompts import render_decision_prompt
 from ..services.message_router import parse_mentions
 from ..services.visibility_filter import filter_conversation
 from ..core.config import settings
@@ -121,8 +122,8 @@ class NegotiationGraph:
                             "timestamp": datetime.now()
                         }
                 
-                # Node 4: Decision Check
-                decision = self._decision_check_node(room_state, seller_results)
+                # Node 4: Decision Check (async - buyer agent decides)
+                decision = await self._decision_check_node(room_state, seller_results)
                 
                 if decision:
                     room_state.status = "completed"
@@ -333,17 +334,17 @@ class NegotiationGraph:
         
         return results
     
-    def _decision_check_node(
+    async def _decision_check_node(
         self,
         room_state: NegotiationRoomState,
         seller_results: dict
     ) -> Optional[dict]:
         """
-        Decision check node - determine if buyer should decide.
+        Decision check node - let buyer agent decide if they want to accept.
         
-        WHAT: Check if any offer meets buyer's criteria
-        WHY: Buyer needs to select best offer or continue
-        HOW: Simple heuristic - first valid offer within buyer's price range
+        WHAT: Use buyer agent to decide if they want to accept an offer or continue
+        WHY: Buyer should make decision based on conversation context, not just price
+        HOW: Extract valid offers, ask buyer agent, parse decision response
         
         Args:
             room_state: Current room state
@@ -352,7 +353,15 @@ class NegotiationGraph:
         Returns:
             Decision dict with seller_id and offer, or None to continue
         """
+        # Check minimum rounds requirement
+        min_rounds = settings.MIN_NEGOTIATION_ROUNDS
+        if room_state.current_round < min_rounds:
+            logger.debug(f"Round {room_state.current_round} < min {min_rounds}, continuing")
+            return None
+        
+        # Extract valid offers
         valid_offers = []
+        seller_id_to_name = {s.seller_id: s.name for s in room_state.sellers}
         
         for seller_id, result in seller_results.items():
             if not result:
@@ -370,22 +379,75 @@ class NegotiationGraph:
                 quantity >= room_state.buyer_constraints.quantity_needed):
                 valid_offers.append({
                     "seller_id": seller_id,
+                    "seller_name": seller_id_to_name.get(seller_id, seller_id),
                     "offer": offer,
                     "price": price,
                     "quantity": quantity
                 })
         
-        if valid_offers:
-            # Simple heuristic: select first valid offer (could be improved)
-            # Sort by price (lowest first) as tie-breaker
-            valid_offers.sort(key=lambda x: x["price"])
-            best = valid_offers[0]
-            
-            return {
-                "seller_id": best["seller_id"],
-                "offer": best["offer"],
-                "reason": f"Best offer: ${best['price']:.2f} per unit"
-            }
+        if not valid_offers:
+            logger.debug("No valid offers, continuing negotiation")
+            return None
         
-        return None
+        # Sort offers by price (lowest first) for presentation
+        valid_offers.sort(key=lambda x: x["price"])
+        
+        try:
+            # Render decision prompt
+            decision_messages = render_decision_prompt(
+                buyer_name=room_state.buyer_name,
+                constraints=room_state.buyer_constraints,
+                valid_offers=valid_offers,
+                conversation_history=room_state.conversation_history,
+                current_round=room_state.current_round,
+                min_rounds=min_rounds
+            )
+            
+            # Ask buyer agent to decide
+            result = await self.provider.generate(
+                messages=decision_messages,
+                temperature=0.3,  # Slightly higher for decision-making
+                max_tokens=100,
+                stop=None
+            )
+            
+            decision_text = result.text.upper().strip()
+            logger.info(f"Buyer decision response: {decision_text}")
+            
+            # Parse decision: look for "ACCEPT [SellerName]"
+            if "ACCEPT" in decision_text:
+                # Extract seller name from response
+                for offer in valid_offers:
+                    seller_name = offer["seller_name"].upper()
+                    # Check if seller name appears in decision text
+                    if seller_name in decision_text or offer["seller_id"] in decision_text:
+                        logger.info(f"Buyer decided to accept offer from {offer['seller_name']}")
+                        return {
+                            "seller_id": offer["seller_id"],
+                            "offer": offer["offer"],
+                            "reason": f"Buyer accepted offer from {offer['seller_name']}: ${offer['price']:.2f} per unit"
+                        }
+                
+                # If "ACCEPT" found but seller name unclear, accept first (best) offer
+                logger.warning("ACCEPT found but seller name unclear, accepting best offer")
+                best = valid_offers[0]
+                return {
+                    "seller_id": best["seller_id"],
+                    "offer": best["offer"],
+                    "reason": f"Buyer accepted offer: ${best['price']:.2f} per unit"
+                }
+            
+            # If CONTINUE or KEEP NEGOTIATING, return None
+            if "CONTINUE" in decision_text or "KEEP NEGOTIATING" in decision_text or "NEGOTIATING" in decision_text:
+                logger.info("Buyer decided to continue negotiating")
+                return None
+            
+            # Default: if unclear, continue (conservative)
+            logger.info("Decision unclear, continuing negotiation")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in buyer decision: {e}")
+            # On error, continue negotiating (conservative)
+            return None
 

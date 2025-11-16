@@ -145,16 +145,16 @@ class SellerAgent:
     
     def _parse_offer(self, text: str) -> Optional[Offer]:
         """
-        Parse offer JSON from LLM output.
+        Parse offer from LLM output - try JSON first, then regex fallback.
         
-        WHAT: Extract offer JSON block from text
-        WHY: Seller may include structured offer
-        HOW: Find JSON block, parse, extract offer dict
+        WHAT: Extract offer from text using multiple parsing strategies
+        WHY: LLMs may not always format JSON correctly, need fallback
+        HOW: Try JSON parsing first, then regex for price/quantity mentions
         """
         if not text:
             return None
         
-        # Try to find JSON block
+        # Strategy 1: Try JSON block parsing
         json_pattern = r'\{[^}]*"offer"[^}]*\}'
         matches = re.findall(json_pattern, text, re.IGNORECASE | re.DOTALL)
         
@@ -170,6 +170,53 @@ class SellerAgent:
                         }
             except (json.JSONDecodeError, ValueError, KeyError):
                 continue
+        
+        # Strategy 2: Regex fallback - look for price mentions
+        # Pattern: $XX.XX or XX.XX dollars/per unit/each
+        price_patterns = [
+            r'\$(\d+(?:\.\d{2})?)\s*(?:per unit|each|dollars?|USD)?',
+            r'(\d+(?:\.\d{2})?)\s*(?:dollars?|USD)\s*(?:per unit|each)?',
+            r'price[:\s]+(?:of\s+)?\$?(\d+(?:\.\d{2})?)',
+            r'offer[:\s]+(?:of\s+)?\$?(\d+(?:\.\d{2})?)',
+        ]
+        
+        # Pattern: quantity mentions
+        qty_patterns = [
+            r'(\d+)\s*(?:units?|items?|pieces?|qty)',
+            r'quantity[:\s]+(\d+)',
+        ]
+        
+        price = None
+        quantity = None
+        
+        # Try to extract price
+        for pattern in price_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    price = float(match.group(1))
+                    break
+                except (ValueError, IndexError):
+                    continue
+        
+        # Try to extract quantity
+        for pattern in qty_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    quantity = int(match.group(1))
+                    break
+                except (ValueError, IndexError):
+                    continue
+        
+        # If we found price, return offer (use default quantity if not found)
+        if price is not None:
+            if quantity is None:
+                quantity = self.inventory_item.quantity_available
+            return {
+                "price": price,
+                "quantity": quantity
+            }
         
         return None
     

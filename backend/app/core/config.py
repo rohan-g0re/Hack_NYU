@@ -7,7 +7,9 @@ HOW: Pydantic BaseSettings reads from .env and environment
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Literal
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -26,7 +28,7 @@ class Settings(BaseSettings):
     
     # LM Studio Configuration
     LM_STUDIO_BASE_URL: str = "http://localhost:1234/v1"
-    LM_STUDIO_DEFAULT_MODEL: str = "llama-3-8b-instruct"
+    LM_STUDIO_DEFAULT_MODEL: str = "qwen/qwen3-1.7b"
     LM_STUDIO_TIMEOUT: int = 30  # seconds
     
     # LLM Request Configuration
@@ -39,20 +41,42 @@ class Settings(BaseSettings):
     LLM_ENABLE_OPENROUTER: bool = False
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_DEFAULT_MODEL: str = "google/gemini-2.5-flash-lite"
     
     # Phase 2: Negotiation Configuration
     MAX_NEGOTIATION_ROUNDS: int = 10
+    MIN_NEGOTIATION_ROUNDS: int = 2  # Minimum rounds before buyer can decide
     PARALLEL_SELLER_LIMIT: int = 3  # Max concurrent seller responses
     
-    # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # CORS - accepts comma-separated string or list
+    # Use str type and parse in validator to avoid JSON parsing issues
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from comma-separated string or list."""
+        if isinstance(v, list):
+            return ",".join(v)
+        if isinstance(v, str):
+            # Return as-is (will be split when used)
+            return v
+        return v
+    
+    def get_cors_origins_list(self) -> list[str]:
+        """Get CORS origins as a list."""
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
     
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "./data/logs/app.log"
     
     class Config:
-        env_file = ".env"
+        # Look for .env in project root (Hack_NYU/.env) first, then backend/.env
+        env_file = [
+            str(Path(__file__).parent.parent.parent.parent / ".env"),  # Hack_NYU/.env
+            str(Path(__file__).parent.parent.parent / ".env"),  # backend/.env (fallback)
+        ]
         env_file_encoding = "utf-8"
         case_sensitive = True
 

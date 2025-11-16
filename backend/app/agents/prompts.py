@@ -143,3 +143,81 @@ Respond with your message. You can make an offer by including the JSON block for
         {"role": "user", "content": user_prompt}
     ]
 
+
+def render_decision_prompt(
+    buyer_name: str,
+    constraints: BuyerConstraints,
+    valid_offers: List[dict],
+    conversation_history: List[Message],
+    current_round: int,
+    min_rounds: int
+) -> List[ChatMessage]:
+    """
+    Render decision prompt for buyer to decide if they want to accept an offer.
+    
+    WHAT: Create prompt asking buyer if they want to accept or continue negotiating
+    WHY: Buyer agent should make the decision based on conversation context
+    HOW: Present valid offers and ask for decision
+    
+    Args:
+        buyer_name: Name of buyer
+        constraints: Buyer's constraints
+        valid_offers: List of valid offers with seller_id, seller_name, price, quantity
+        conversation_history: Full conversation history
+        current_round: Current round number
+        min_rounds: Minimum rounds before buyer can decide
+        
+    Returns:
+        List of ChatMessage for decision prompt
+    """
+    system_prompt = f"""You are {buyer_name}, a buyer making a decision about offers.
+
+Your Requirements:
+- Item: {constraints.item_name}
+- Quantity needed: {constraints.quantity_needed}
+- Budget: ${constraints.min_price_per_unit:.2f} - ${constraints.max_price_per_unit:.2f} per unit
+
+Current Round: {current_round}
+Minimum Rounds Required: {min_rounds}
+
+You have received the following valid offers that meet your requirements:"""
+
+    offers_text = ""
+    for i, offer in enumerate(valid_offers, 1):
+        seller_name = offer.get("seller_name", offer.get("seller_id", "Unknown"))
+        price = offer.get("price", 0)
+        quantity = offer.get("quantity", 0)
+        offers_text += f"\n{i}. {seller_name}: ${price:.2f} per unit, {quantity} units"
+
+    system_prompt += offers_text
+
+    system_prompt += f"""
+
+Decision Instructions:
+- If you want to ACCEPT an offer, respond with: "ACCEPT [SellerName]" (e.g., "ACCEPT TechStore")
+- If you want to CONTINUE negotiating, respond with: "CONTINUE" or "KEEP NEGOTIATING"
+- Consider: price, seller responsiveness, conversation quality, and whether you've negotiated enough rounds
+- You should negotiate at least {min_rounds} rounds before accepting unless the offer is exceptional
+
+Be decisive but thoughtful."""
+
+    # Add recent conversation context
+    history_text = ""
+    if conversation_history:
+        history_text = "\n\nRecent conversation:\n"
+        for msg in conversation_history[-5:]:  # Last 5 messages for decision context
+            history_text += f"{msg.get('sender_name', 'Unknown')}: {msg.get('content', '')}\n"
+
+    user_prompt = f"""You are at round {current_round}.{history_text}
+
+Do you want to ACCEPT one of the offers above, or CONTINUE negotiating?
+
+Respond with either:
+- "ACCEPT [SellerName]" to accept an offer
+- "CONTINUE" or "KEEP NEGOTIATING" to continue"""
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
