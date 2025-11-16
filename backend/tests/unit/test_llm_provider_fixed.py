@@ -81,8 +81,20 @@ class TestProviderFactory:
 class TestLMStudioProvider:
     """Test LM Studio provider implementation."""
     
+    @pytest.fixture
+    def provider(self):
+        """Create LM Studio provider with test config."""
+        with patch("app.core.config.settings") as mock_settings:
+            mock_settings.LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+            mock_settings.LM_STUDIO_DEFAULT_MODEL = "test-model"
+            mock_settings.LM_STUDIO_TIMEOUT = 30
+            mock_settings.LLM_MAX_RETRIES = 3
+            mock_settings.LLM_RETRY_DELAY = 0.1  # Fast retries for tests
+            provider = LMStudioProvider()
+        return provider
+    
     @pytest.mark.asyncio
-    async def test_ping_success(self):
+    async def test_ping_success(self, provider):
         """Test successful ping returns available status."""
         async with respx.mock:
             respx.get("http://localhost:1234/v1/models").mock(
@@ -91,14 +103,6 @@ class TestLMStudioProvider:
                     json={"data": [{"id": "model-1"}, {"id": "model-2"}]}
                 )
             )
-            
-            with patch("app.core.config.settings") as mock_settings:
-                mock_settings.LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
-                mock_settings.LM_STUDIO_DEFAULT_MODEL = "test-model"
-                mock_settings.LM_STUDIO_TIMEOUT = 30
-                mock_settings.LLM_MAX_RETRIES = 3
-                mock_settings.LLM_RETRY_DELAY = 0.1
-                provider = LMStudioProvider()
             
             status = await provider.ping()
             assert status.available is True
