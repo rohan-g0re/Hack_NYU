@@ -112,8 +112,13 @@ class NegotiationGraph:
                 yield {
                     "type": "buyer_message",
                     "data": {
+                        "sender_type": "buyer",
+                        "sender_id": room_state.buyer_id,
+                        "sender_name": room_state.buyer_name,
                         "message": buyer_result["message"],
+                        "content": buyer_result["message"],  # Alias for compatibility
                         "mentioned_sellers": buyer_result["mentioned_sellers"],
+                        "turn_number": room_state.current_round,
                         "round": room_state.current_round
                     },
                     "timestamp": datetime.now()
@@ -168,10 +173,15 @@ class NegotiationGraph:
                         yield {
                             "type": "seller_response",
                             "data": {
+                                "sender_type": "seller",
+                                "sender_id": seller_id,
                                 "seller_id": seller_id,
+                                "sender_name": seller_name,
                                 "seller_name": seller_name,
                                 "message": error_message,
+                                "content": error_message,  # Alias for compatibility
                                 "offer": None,
+                                "turn_number": room_state.current_round,
                                 "round": room_state.current_round
                             },
                             "timestamp": datetime.now()
@@ -196,10 +206,15 @@ class NegotiationGraph:
                         yield {
                             "type": "seller_response",
                             "data": {
+                                "sender_type": "seller",
+                                "sender_id": seller_id,
                                 "seller_id": seller_id,
+                                "sender_name": seller_name,
                                 "seller_name": seller_name,
                                 "message": error_message,
+                                "content": error_message,  # Alias for compatibility
                                 "offer": None,
+                                "turn_number": room_state.current_round,
                                 "round": room_state.current_round
                             },
                             "timestamp": datetime.now()
@@ -222,10 +237,15 @@ class NegotiationGraph:
                     yield {
                         "type": "seller_response",
                         "data": {
+                            "sender_type": "seller",
+                            "sender_id": seller_id,
                             "seller_id": seller_id,
+                            "sender_name": seller_name,
                             "seller_name": seller_name,
                             "message": result["message"],
+                            "content": result["message"],  # Alias for compatibility
                             "offer": result.get("offer"),
+                            "turn_number": room_state.current_round,
                             "round": room_state.current_round
                         },
                         "timestamp": datetime.now()

@@ -12,20 +12,24 @@ interface ChatPanelProps {
 }
 
 function BuyerMessage({ message }: { message: Message }) {
+  const timestamp = formatTimestamp(message.timestamp);
+  
   return (
     <div className="flex justify-start mb-4 animate-slide-in">
-      <div className="max-w-[80%]">
-        <div className="flex items-center space-x-2 mb-1">
-          <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center text-white text-sm font-bold">
-            B
-          </div>
-          <span className="text-sm font-medium text-neutral-700">{message.sender_name}</span>
-          <span className="text-xs text-neutral-500">{formatTimestamp(message.timestamp)}</span>
+      <div className="flex items-start space-x-3 max-w-[80%]">
+        <div className="w-9 h-9 bg-primary-500 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-sm flex-shrink-0">
+          B
         </div>
-        <div
-          className="bg-primary-100 text-primary-900 rounded-lg rounded-tl-none px-4 py-2"
-          dangerouslySetInnerHTML={{ __html: highlightMentions(message.message) }}
-        />
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-semibold text-neutral-800">{message.sender_name}</span>
+            <span className="text-xs text-neutral-500">{timestamp}</span>
+          </div>
+          <div
+            className="bg-primary-100 text-primary-900 rounded-lg rounded-tl-none px-4 py-2 shadow-sm"
+            dangerouslySetInnerHTML={{ __html: highlightMentions(message.message) }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -33,29 +37,32 @@ function BuyerMessage({ message }: { message: Message }) {
 
 function SellerMessage({ message, sellerIndex }: { message: Message; sellerIndex: number }) {
   const sellerColor = getSellerColor(sellerIndex);
+  const timestamp = formatTimestamp(message.timestamp);
   
   return (
     <div className="flex justify-end mb-4 animate-slide-in">
-      <div className="max-w-[80%]">
-        <div className="flex items-center justify-end space-x-2 mb-1">
-          <span className="text-xs text-neutral-500">{formatTimestamp(message.timestamp)}</span>
-          <span className="text-sm font-medium text-neutral-700">{message.sender_name}</span>
-          <div
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
-            style={{ backgroundColor: sellerColor }}
-          >
-            S
+      <div className="flex items-start space-x-3 max-w-[80%]">
+        <div className="flex-1">
+          <div className="flex items-center justify-end gap-2 mb-1">
+            <span className="text-xs text-neutral-500">{timestamp}</span>
+            <span className="text-sm font-semibold text-neutral-800">{message.sender_name}</span>
+          </div>
+          <div className="bg-neutral-100 text-neutral-900 rounded-lg rounded-tr-none px-4 py-2 shadow-sm">
+            <p>{message.message}</p>
+            {message.updated_offer && (
+              <div className="mt-2 pt-2 border-t border-neutral-300">
+                <p className="text-sm font-semibold text-secondary-600">
+                  💰 Offer: ${message.updated_offer.price}/unit (x{message.updated_offer.quantity})
+                </p>
+              </div>
+            )}
           </div>
         </div>
-        <div className="bg-neutral-100 text-neutral-900 rounded-lg rounded-tr-none px-4 py-2">
-          <p>{message.message}</p>
-          {message.updated_offer && (
-            <div className="mt-2 pt-2 border-t border-neutral-300">
-              <p className="text-sm font-semibold text-secondary-600">
-                💰 Offer: ${message.updated_offer.price}/unit (x{message.updated_offer.quantity})
-              </p>
-            </div>
-          )}
+        <div
+          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-sm flex-shrink-0"
+          style={{ backgroundColor: sellerColor }}
+        >
+          S
         </div>
       </div>
     </div>
