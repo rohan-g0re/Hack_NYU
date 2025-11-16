@@ -9,6 +9,7 @@ HOW: Mock HTTP with respx, test success and failure paths
 import pytest
 import respx
 import httpx
+import json
 from unittest.mock import patch
 
 from app.llm.provider_factory import get_provider, reset_provider
@@ -22,14 +23,8 @@ from app.llm.types import (
 )
 
 
-@pytest.fixture(autouse=True)
-def reset_provider_singleton():
-    """Reset provider singleton before each test."""
-    reset_provider()
-    yield
-    reset_provider()
-
-
+@pytest.mark.phase1
+@pytest.mark.unit
 class TestProviderFactory:
     """Test provider factory selection logic."""
     
@@ -81,6 +76,8 @@ class TestProviderFactory:
         assert provider1 is provider2
 
 
+@pytest.mark.phase1
+@pytest.mark.unit
 class TestLMStudioProvider:
     """Test LM Studio provider implementation."""
     
@@ -263,6 +260,8 @@ class TestLMStudioProvider:
         assert chunks[-1].is_end is True
 
 
+@pytest.mark.phase1
+@pytest.mark.unit
 class TestOpenRouterProvider:
     """Test OpenRouter provider stub."""
     
@@ -303,4 +302,217 @@ class TestOpenRouterProvider:
                 max_tokens=100
             ):
                 pass
+
+
+@pytest.mark.phase1
+@pytest.mark.unit
+class TestLMStudioProviderEdgeCases:
+    """Additional edge case tests for LM Studio provider."""
+    
+    @pytest.fixture
+    def provider(self):
+        """Create LM Studio provider with test config."""
+        with patch("app.core.config.settings") as mock_settings:
+            mock_settings.LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+            mock_settings.LM_STUDIO_DEFAULT_MODEL = "test-model"
+            mock_settings.LM_STUDIO_TIMEOUT = 30
+            mock_settings.LLM_MAX_RETRIES = 3
+            mock_settings.LLM_RETRY_DELAY = 0.1
+            provider = LMStudioProvider()
+        return provider
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_generate_with_stop_sequences(self, provider):
+        """Test generation with stop sequences."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "Hello"}}],
+                    "usage": {"total_tokens": 5},
+                    "model": "test-model"
+                }
+            )
+        )
+        
+        result = await provider.generate(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=0.7,
+            max_tokens=100,
+            stop=["\n", "END"]
+        )
+        
+        assert result.text == "Hello"
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_generate_400_error_no_retry(self, provider):
+        """Test generation with 400 error doesn't retry."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(400, json={"error": "Bad request"})
+        )
+        
+        with pytest.raises(ProviderResponseError, match="400"):
+            await provider.generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                temperature=0.7,
+                max_tokens=100
+            )
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_generate_exhausts_retries(self, provider):
+        """Test generation that exhausts all retries."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            side_effect=httpx.Response(500, text="Server error")
+        )
+        
+        with pytest.raises(ProviderResponseError, match="500"):
+            await provider.generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                temperature=0.7,
+                max_tokens=100
+            )
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stream_with_done_signal(self, provider):
+        """Test streaming with [DONE] signal."""
+        sse_data = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}\n',
+            'data: [DONE]\n',
+        ]
+        
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(200, text="".join(sse_data))
+        )
+        
+        chunks = []
+        async for chunk in provider.stream(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=0.7,
+            max_tokens=100
+        ):
+            chunks.append(chunk)
+        
+        assert len(chunks) == 2
+        assert chunks[0].token == "Hello"
+        assert chunks[1].is_end is True
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stream_invalid_chunk_raises(self, provider):
+        """Test streaming with invalid JSON chunk raises error."""
+        sse_data = [
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}\n',
+            'data: {invalid json}\n',
+        ]
+        
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(200, text="".join(sse_data))
+        )
+        
+        with pytest.raises(ProviderResponseError, match="Invalid streaming chunk"):
+            chunks = []
+            async for chunk in provider.stream(
+                messages=[{"role": "user", "content": "Hi"}],
+                temperature=0.7,
+                max_tokens=100
+            ):
+                chunks.append(chunk)
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stream_empty_content(self, provider):
+        """Test streaming with empty content chunks."""
+        sse_data = [
+            'data: {"choices":[{"delta":{}}]}\n',  # Empty delta
+            'data: {"choices":[{"delta":{"content":""}}]}\n',  # Empty content
+            'data: {"choices":[{"delta":{"content":"Hi"}}]}\n',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+        ]
+        
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(200, text="".join(sse_data))
+        )
+        
+        chunks = []
+        async for chunk in provider.stream(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=0.7,
+            max_tokens=100
+        ):
+            if chunk.token:  # Only collect non-empty tokens
+                chunks.append(chunk)
+        
+        assert len(chunks) == 1
+        assert chunks[0].token == "Hi"
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stream_timeout_raises(self, provider):
+        """Test streaming timeout raises ProviderTimeoutError."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            side_effect=httpx.TimeoutException("timeout")
+        )
+        
+        with pytest.raises(ProviderTimeoutError):
+            async for _ in provider.stream(
+                messages=[{"role": "user", "content": "Hi"}],
+                temperature=0.7,
+                max_tokens=100
+            ):
+                pass
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_stream_http_error_raises(self, provider):
+        """Test streaming HTTP error raises ProviderResponseError."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(503, text="Service unavailable")
+        )
+        
+        with pytest.raises(ProviderResponseError, match="503"):
+            async for _ in provider.stream(
+                messages=[{"role": "user", "content": "Hi"}],
+                temperature=0.7,
+                max_tokens=100
+            ):
+                pass
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_ping_empty_models_list(self, provider):
+        """Test ping with empty models list."""
+        respx.get("http://localhost:1234/v1/models").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        
+        status = await provider.ping()
+        assert status.available is True
+        assert status.models is None  # Empty list converted to None
+    
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_generate_missing_usage_field(self, provider):
+        """Test generation with missing usage field."""
+        respx.post("http://localhost:1234/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "Hello"}}],
+                    "model": "test-model"
+                }
+            )
+        )
+        
+        result = await provider.generate(
+            messages=[{"role": "user", "content": "Hi"}],
+            temperature=0.7,
+            max_tokens=100
+        )
+        
+        assert result.text == "Hello"
+        assert result.usage == {}  # Empty dict when missing
 

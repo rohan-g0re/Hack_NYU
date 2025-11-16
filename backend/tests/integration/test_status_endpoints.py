@@ -16,36 +16,14 @@ from app.main import app
 from app.llm.provider_factory import reset_provider
 
 
-@pytest.fixture(autouse=True)
-def reset_provider_singleton():
-    """Reset provider singleton before each test."""
-    reset_provider()
-    yield
-    reset_provider()
-
-
 @pytest.fixture
 def client():
     """Create FastAPI test client."""
     return TestClient(app)
 
 
-@pytest.fixture
-def mock_settings():
-    """Mock settings for tests."""
-    with patch("app.core.config.settings") as mock:
-        mock.LLM_PROVIDER = "lm_studio"
-        mock.LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
-        mock.LM_STUDIO_DEFAULT_MODEL = "test-model"
-        mock.LM_STUDIO_TIMEOUT = 30
-        mock.LLM_MAX_RETRIES = 3
-        mock.LLM_RETRY_DELAY = 2
-        mock.APP_NAME = "Test App"
-        mock.APP_VERSION = "0.1.0"
-        mock.DATABASE_URL = "sqlite:///./test.db"
-        yield mock
-
-
+@pytest.mark.phase1
+@pytest.mark.integration
 class TestLLMStatusEndpoint:
     """Test /api/v1/llm/status endpoint."""
     
@@ -135,6 +113,8 @@ class TestLLMStatusEndpoint:
         assert data["database"]["error"] == "Connection failed"
 
 
+@pytest.mark.phase1
+@pytest.mark.integration
 class TestHealthEndpoint:
     """Test /api/v1/health endpoint."""
     
@@ -248,6 +228,8 @@ class TestHealthEndpoint:
         assert data["components"]["database"]["available"] is False
 
 
+@pytest.mark.phase1
+@pytest.mark.integration
 class TestRootEndpoint:
     """Test root endpoint."""
     
