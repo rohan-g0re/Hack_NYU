@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from .core.config import settings
 from .core.database import init_db, close_db
+from .core.session_manager import SessionManager
 from .utils.logger import setup_logging, get_logger
 from .middleware.error_handler import register_exception_handlers
 from .api.v1.router import api_router
@@ -32,14 +33,15 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    await init_db()
+    init_db()  # Sync init_db for Phase 3
+    SessionManager.cleanup_old_logs()  # Clean up old logs on startup
     logger.info("Application startup complete")
     
     yield
     
     # Shutdown
     logger.info("Shutting down application")
-    await close_db()
+    close_db()  # Sync close_db for Phase 3
     logger.info("Application shutdown complete")
 
 

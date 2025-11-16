@@ -1,56 +1,80 @@
 """
 Database utilities and connection management.
 
-WHAT: SQLite database setup and health checks
-WHY: Store negotiation state, agent data, session history
-HOW: SQLAlchemy async engine with health check method
+WHAT: SQLite database setup with WAL mode for Phase 3
+WHY: Store negotiation state, agent data, session history with Windows ARM compatibility
+HOW: SQLAlchemy sync engine v2 with WAL mode, session management
 """
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
+from sqlalchemy import create_engine, text, event
+from sqlalchemy.orm import sessionmaker, declarative_base
+from contextlib import contextmanager
+from pathlib import Path
 
 from .config import settings
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Convert sqlite:/// to sqlite+aiosqlite:///
-DATABASE_URL = settings.DATABASE_URL.replace("sqlite:///", "sqlite+aiosqlite:///")
+# Ensure data directory exists
+data_dir = Path(settings.DATABASE_URL.replace("sqlite:///", "")).parent
+if not data_dir.exists():
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-# Create async engine
-engine = create_async_engine(
-    DATABASE_URL,
+# Create sync engine (Windows ARM compatible, per spec)
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False},  # Allow multi-threaded access
     echo=settings.DEBUG,
     future=True
 )
 
+# Enable WAL mode on connection
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    """Enable WAL mode for better concurrency."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA foreign_keys=ON")  # Enable FK constraints
+    cursor.close()
+
 # Session factory
-async_session_maker = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
+SessionLocal = sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False
 )
 
 # Base for models
 Base = declarative_base()
 
 
-async def get_db():
+@contextmanager
+def get_db():
     """
-    Dependency for FastAPI endpoints to get database session.
+    Context manager for database session.
+    
+    Usage:
+        with get_db() as db:
+            # use db session
+            pass
     
     Yields:
-        AsyncSession
+        Session: SQLAlchemy session
     """
-    async with async_session_maker() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
-async def ping_database() -> dict:
+def ping_database() -> dict:
     """
     Check database connectivity.
     
@@ -58,8 +82,8 @@ async def ping_database() -> dict:
         Dict with status and info
     """
     try:
-        async with engine.connect() as conn:
-            result = await conn.execute(text("SELECT 1"))
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
             result.fetchone()
         
         return {
@@ -76,15 +100,20 @@ async def ping_database() -> dict:
         }
 
 
-async def init_db():
-    """Initialize database tables."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database initialized")
+def init_db():
+    """Initialize database tables and enable WAL mode."""
+    with engine.connect() as conn:
+        # Ensure WAL mode
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+        conn.commit()
+    
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database initialized with WAL mode")
 
 
-async def close_db():
+def close_db():
     """Close database connections."""
-    await engine.dispose()
+    engine.dispose()
     logger.info("Database connections closed")
-

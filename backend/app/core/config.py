@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "./data/logs/app.log"
+    LOGS_DIR: str = "./data/logs/sessions"
+    LOG_RETENTION_DAYS: int = 7
+    AUTO_SAVE_NEGOTIATIONS: bool = True
+    
+    # Session Management
+    SESSION_CLEANUP_HOURS: int = 1  # TTL for active_rooms cache
     
     class Config:
         # Look for .env in project root (Hack_NYU/.env) first, then backend/.env
