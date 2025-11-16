@@ -1,0 +1,63 @@
+[tool.poetry]
+name = "multi-agent-marketplace-backend"
+version = "0.1.0"
+description = "Multi-agent marketplace backend with LLM-powered negotiation"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# FastAPI and server
+fastapi = "^0.104.1"
+uvicorn = {version = "^0.24.0", extras = ["standard"]}
+# HTTP client - pinned for Windows ARM
+httpx = "^0.25.1"
+# SSE support
+sse-starlette = "^1.8.2"
+# Database
+sqlalchemy = {version = "^2.0.23", extras = ["asyncio"]}
+aiosqlite = "^0.19.0"
+# Config and validation - pinned for stability
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+# Utilities
+python-dotenv = "^1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+respx = "^0.20.2"
+# Linting and formatting
+ruff = "^0.1.6"
+black = "^23.11.0"
+mypy = "^1.7.1"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
