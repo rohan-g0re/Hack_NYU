@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     
     # Phase 2: Negotiation Configuration
-    MAX_NEGOTIATION_ROUNDS: int = 10
+    MAX_NEGOTIATION_ROUNDS: int = 5
     PARALLEL_SELLER_LIMIT: int = 3  # Max concurrent seller responses
     
     # CORS

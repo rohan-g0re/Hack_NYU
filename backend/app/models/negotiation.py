@@ -31,10 +31,14 @@ class NegotiationRoomState:
     sellers: list[Seller]
     conversation_history: list[Message] = field(default_factory=list)
     current_round: int = 0
-    max_rounds: int = 10
+    max_rounds: int = 5
     seed: Optional[int] = None  # For deterministic testing
     status: Literal["pending", "active", "completed", "no_sellers_available", "aborted"] = "pending"
     selected_seller_id: Optional[str] = None
     final_offer: Optional[dict] = None  # {"price": float, "quantity": int}
     decision_reason: Optional[str] = None
+    # Offer tracking (Phase 2)
+    offers_by_seller: dict[str, list[dict]] = field(default_factory=dict)  # seller_id -> list of offers
+    seller_response_times: dict[str, float] = field(default_factory=dict)  # seller_id -> response time in seconds
+    first_offer_round: Optional[int] = None  # Round when first offer was received
 

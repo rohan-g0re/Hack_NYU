@@ -2,8 +2,9 @@
 Negotiation graph builder - LangGraph-style orchestration.
 
 WHAT: Async state machine for multi-round negotiations
-WHY: Orchestrate buyer turns, parallel seller responses, and decision logic
-HOW: Async generator with nodes: BuyerTurn → Routing → ParallelSellers → DecisionCheck → loop
+WHY: Orchestrate buyer turns, parallel seller responses, and intelligent decision logic
+HOW: Async generator with nodes: BuyerTurn → Routing → ParallelSellers → DecisionCheck → BuyerDecision → complete
+     Flow: Analyze offers with decision engine, then use LLM for final selection
 """
 
 import asyncio
@@ -19,8 +20,11 @@ from ..agents.buyer_agent import BuyerAgent
 from ..agents.seller_agent import SellerAgent
 from ..services.message_router import parse_mentions
 from ..services.visibility_filter import filter_conversation
+from ..services.decision_engine import analyze_offers, select_best_offer, generate_decision_reason
+from ..agents.prompts import render_buyer_decision_prompt
 from ..core.config import settings
 from ..utils.logger import get_logger
+import re
 
 logger = get_logger(__name__)
 
@@ -121,26 +125,38 @@ class NegotiationGraph:
                             "timestamp": datetime.now()
                         }
                 
-                # Node 4: Decision Check
-                decision = self._decision_check_node(room_state, seller_results)
+                # Node 4: Decision Check (analyze offers)
+                decision_check = self._decision_check_node(room_state, seller_results)
                 
-                if decision:
-                    room_state.status = "completed"
-                    room_state.selected_seller_id = decision["seller_id"]
-                    room_state.final_offer = decision["offer"]
-                    room_state.decision_reason = decision.get("reason", "Best offer selected")
+                # Force decision at last round if any valid offers exist
+                is_last_round = room_state.current_round >= self.max_rounds
+                should_decide = decision_check and decision_check.get("valid_offers")
+                
+                if should_decide:
+                    # Node 5: Buyer Decision (LLM-based selection)
+                    valid_offers = decision_check["valid_offers"]
+                    buyer_decision = await self._buyer_decision_node(room_state, valid_offers)
                     
-                    yield {
-                        "type": "negotiation_complete",
-                        "data": {
-                            "selected_seller_id": decision["seller_id"],
-                            "final_offer": decision["offer"],
-                            "reason": decision.get("reason"),
-                            "rounds": room_state.current_round
-                        },
-                        "timestamp": datetime.now()
-                    }
-                    break
+                    if buyer_decision:
+                        room_state.status = "completed"
+                        room_state.selected_seller_id = buyer_decision["seller_id"]
+                        room_state.final_offer = buyer_decision["offer"]
+                        room_state.decision_reason = buyer_decision.get("reason", "Best offer selected")
+                        
+                        yield {
+                            "type": "negotiation_complete",
+                            "data": {
+                                "selected_seller_id": buyer_decision["seller_id"],
+                                "final_offer": buyer_decision["offer"],
+                                "reason": buyer_decision.get("reason"),
+                                "rounds": room_state.current_round
+                            },
+                            "timestamp": datetime.now()
+                        }
+                        break
+                elif is_last_round:
+                    # Reached max rounds but no valid offers - log this case
+                    logger.warning(f"Max rounds reached ({self.max_rounds}) with no valid offers")
                 
                 # Emit heartbeat
                 yield {
@@ -313,6 +329,19 @@ class NegotiationGraph:
                     
                     room_state.conversation_history.append(message)
                     
+                    # Track offer (Phase 2)
+                    if result.get("offer"):
+                        if seller.seller_id not in room_state.offers_by_seller:
+                            room_state.offers_by_seller[seller.seller_id] = []
+                        
+                        offer_with_round = dict(result["offer"])
+                        offer_with_round["round"] = room_state.current_round
+                        room_state.offers_by_seller[seller.seller_id].append(offer_with_round)
+                        
+                        # Track first offer round
+                        if room_state.first_offer_round is None:
+                            room_state.first_offer_round = room_state.current_round
+                    
                     return result
                     
                 except Exception as e:
@@ -339,53 +368,161 @@ class NegotiationGraph:
         seller_results: dict
     ) -> Optional[dict]:
         """
-        Decision check node - determine if buyer should decide.
+        Decision check node - analyze offers using decision engine.
         
-        WHAT: Check if any offer meets buyer's criteria
-        WHY: Buyer needs to select best offer or continue
-        HOW: Simple heuristic - first valid offer within buyer's price range
+        WHAT: Analyze offers with multi-factor scoring
+        WHY: Determine if any valid offers exist for buyer to choose from
+        HOW: Use decision engine to analyze and score offers
         
         Args:
             room_state: Current room state
             seller_results: Dict of seller_id -> response dict
             
         Returns:
-            Decision dict with seller_id and offer, or None to continue
+            Dict with "valid_offers" (list of OfferAnalysis) or None if no valid offers
         """
-        valid_offers = []
+        # Use decision engine to analyze offers
+        try:
+            offer_analyses = analyze_offers(room_state, seller_results)
+            
+            if offer_analyses:
+                logger.info(f"Found {len(offer_analyses)} valid offers for decision")
+                return {
+                    "valid_offers": offer_analyses
+                }
+            else:
+                logger.info("No valid offers yet, continuing negotiation")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error analyzing offers: {e}")
+            return None
+    
+    async def _buyer_decision_node(
+        self,
+        room_state: NegotiationRoomState,
+        valid_offers: list
+    ) -> Optional[dict]:
+        """
+        Buyer decision node - use LLM to select best offer.
         
-        for seller_id, result in seller_results.items():
-            if not result:
-                continue
-            
-            offer = result.get("offer")
-            if not offer:
-                continue
-            
-            price = offer.get("price", 0)
-            quantity = offer.get("quantity", 0)
-            
-            # Check if offer is within buyer's constraints
-            if (room_state.buyer_constraints.min_price_per_unit <= price <= room_state.buyer_constraints.max_price_per_unit and
-                quantity >= room_state.buyer_constraints.quantity_needed):
-                valid_offers.append({
-                    "seller_id": seller_id,
-                    "offer": offer,
-                    "price": price,
-                    "quantity": quantity
-                })
+        WHAT: Ask buyer LLM to make intelligent offer selection
+        WHY: More realistic decision making considering soft factors
+        HOW: Create decision prompt with offer table, get LLM selection, validate
         
-        if valid_offers:
-            # Simple heuristic: select first valid offer (could be improved)
-            # Sort by price (lowest first) as tie-breaker
-            valid_offers.sort(key=lambda x: x["price"])
-            best = valid_offers[0]
+        Args:
+            room_state: Current room state
+            valid_offers: List of OfferAnalysis objects
+            
+        Returns:
+            Decision dict with seller_id, offer, and reason, or None if decision fails
+        """
+        if not valid_offers:
+            return None
+        
+        try:
+            # Create decision prompt
+            decision_prompt = render_buyer_decision_prompt(
+                buyer_name=room_state.buyer_name,
+                constraints=room_state.buyer_constraints,
+                offers=valid_offers,
+                conversation_history=room_state.conversation_history
+            )
+            
+            # Get LLM decision
+            logger.info(f"Asking buyer LLM to decide from {len(valid_offers)} offers")
+            result = await self.provider.generate(
+                messages=decision_prompt,
+                temperature=0.0,  # Deterministic
+                max_tokens=128
+            )
+            
+            # Parse decision from response
+            selected_seller_id = self._parse_decision(result.text, valid_offers)
+            
+            if not selected_seller_id:
+                # Fallback to best scored offer if LLM doesn't make clear decision
+                logger.warning("LLM decision unclear, using highest scored offer")
+                best_analysis = select_best_offer(valid_offers, room_state.buyer_constraints)
+                if best_analysis:
+                    selected_seller_id = best_analysis.seller_id
+                else:
+                    return None
+            
+            # Find the selected offer analysis
+            selected_analysis = None
+            for analysis in valid_offers:
+                if analysis.seller_id == selected_seller_id:
+                    selected_analysis = analysis
+                    break
+            
+            if not selected_analysis:
+                logger.error(f"Selected seller {selected_seller_id} not found in valid offers")
+                return None
+            
+            # Generate decision reason
+            reason = generate_decision_reason(selected_analysis)
+            
+            logger.info(f"Buyer decided: {reason}")
             
             return {
-                "seller_id": best["seller_id"],
-                "offer": best["offer"],
-                "reason": f"Best offer: ${best['price']:.2f} per unit"
+                "seller_id": selected_analysis.seller_id,
+                "offer": selected_analysis.offer,
+                "reason": reason
             }
+            
+        except Exception as e:
+            logger.error(f"Buyer decision node error: {e}")
+            # Fallback to best scored offer
+            best_analysis = select_best_offer(valid_offers, room_state.buyer_constraints)
+            if best_analysis:
+                return {
+                    "seller_id": best_analysis.seller_id,
+                    "offer": best_analysis.offer,
+                    "reason": generate_decision_reason(best_analysis)
+                }
+            return None
+    
+    def _parse_decision(self, text: str, valid_offers: list) -> Optional[str]:
+        """
+        Parse buyer's decision from LLM response.
         
+        WHAT: Extract seller mention from decision text
+        WHY: LLM response needs parsing to find selected seller
+        HOW: Look for "DECISION: @SellerName" pattern or @mentions
+        
+        Args:
+            text: LLM response text
+            valid_offers: List of OfferAnalysis to match against
+            
+        Returns:
+            seller_id of selected seller, or None if unclear
+        """
+        if not text:
+            return None
+        
+        # Create map of seller names to IDs
+        seller_map = {analysis.seller_name.lower(): analysis.seller_id for analysis in valid_offers}
+        
+        # First try to find "DECISION: @SellerName" pattern
+        decision_pattern = r'DECISION:\s*@(\w+)'
+        match = re.search(decision_pattern, text, re.IGNORECASE)
+        if match:
+            seller_name = match.group(1).lower()
+            if seller_name in seller_map:
+                logger.info(f"Parsed decision: @{seller_name}")
+                return seller_map[seller_name]
+        
+        # Fallback: look for any @mention in the response
+        mention_pattern = r'@(\w+)'
+        mentions = re.findall(mention_pattern, text)
+        for mention in mentions:
+            mention_lower = mention.lower()
+            if mention_lower in seller_map:
+                logger.info(f"Found mention in decision: @{mention}")
+                return seller_map[mention_lower]
+        
+        # No clear decision found
+        logger.warning(f"Could not parse decision from: {text[:100]}")
         return None
 

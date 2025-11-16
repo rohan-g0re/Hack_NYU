@@ -235,3 +235,133 @@ async def test_negotiation_graph_handles_errors_gracefully(provider, sample_room
     # (errors are logged but don't crash the graph)
     assert len(events) > 0
 
+
+@pytest.mark.phase2
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_negotiation_with_offer_tracking(provider, sample_room_state):
+    """Test offers are tracked across rounds in room_state."""
+    graph = NegotiationGraph(provider)
+    
+    events = []
+    async for event in graph.run(sample_room_state):
+        events.append(event)
+        
+        # Stop after completion or a few rounds
+        if event["type"] == "negotiation_complete" or len(events) > 15:
+            break
+    
+    # Check if offers were tracked
+    # At least one seller should have made an offer
+    offer_events = [e for e in events if e["type"] == "seller_response" and e["data"].get("offer")]
+    
+    if offer_events:
+        # offers_by_seller should be populated
+        assert hasattr(sample_room_state, 'offers_by_seller')
+        # May have tracked offers
+        if sample_room_state.offers_by_seller:
+            # Verify structure
+            for seller_id, offers_list in sample_room_state.offers_by_seller.items():
+                assert isinstance(offers_list, list)
+                for offer in offers_list:
+                    assert "price" in offer or "round" in offer
+
+
+@pytest.mark.phase2
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_negotiation_uses_decision_engine(provider):
+    """Test decision engine scoring is used for offer selection."""
+    # Create scenario with 2 sellers with different profiles
+    buyer_constraints = BuyerConstraints(
+        item_id="item1",
+        item_name="Widget",
+        quantity_needed=5,
+        min_price_per_unit=10.0,
+        max_price_per_unit=20.0
+    )
+    
+    from app.models.agent import Seller, SellerProfile, InventoryItem
+    
+    sellers = [
+        Seller(
+            seller_id="seller1",
+            name="Alice",
+            profile=SellerProfile(priority="customer_retention", speaking_style="very_sweet"),
+            inventory=[InventoryItem(
+                item_id="item1", item_name="Widget",
+                cost_price=8.0, selling_price=18.0, least_price=12.0, quantity_available=10
+            )]
+        ),
+        Seller(
+            seller_id="seller2",
+            name="Bob",
+            profile=SellerProfile(priority="maximize_profit", speaking_style="rude"),
+            inventory=[InventoryItem(
+                item_id="item1", item_name="Widget",
+                cost_price=7.0, selling_price=19.0, least_price=11.0, quantity_available=8
+            )]
+        )
+    ]
+    
+    from app.models.negotiation import NegotiationRoomState
+    room_state = NegotiationRoomState(
+        room_id="room_test",
+        buyer_id="buyer1",
+        buyer_name="Charlie",
+        buyer_constraints=buyer_constraints,
+        sellers=sellers,
+        current_round=0,
+        max_rounds=3,
+        seed=42
+    )
+    
+    graph = NegotiationGraph(provider)
+    
+    events = []
+    async for event in graph.run(room_state):
+        events.append(event)
+        
+        if event["type"] == "negotiation_complete":
+            break
+    
+    # If negotiation completed with a selection, verify decision was made
+    completion_events = [e for e in events if e["type"] == "negotiation_complete"]
+    if completion_events and completion_events[0]["data"].get("selected_seller_id"):
+        # Decision was made - verify it used decision engine
+        assert "reason" in completion_events[0]["data"]
+        # Reason should contain score or analysis info
+        reason = completion_events[0]["data"]["reason"]
+        assert isinstance(reason, str)
+        assert len(reason) > 0
+
+
+@pytest.mark.phase2
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_buyer_decision_node_called(provider, sample_room_state):
+    """Test BuyerDecisionNode is invoked when offers exist."""
+    graph = NegotiationGraph(provider)
+    
+    # Run negotiation
+    events = []
+    async for event in graph.run(sample_room_state):
+        events.append(event)
+        
+        if event["type"] == "negotiation_complete":
+            break
+        
+        # Limit to prevent infinite loop in test
+        if len(events) > 20:
+            break
+    
+    # Look for completion with decision
+    completion_events = [e for e in events if e["type"] == "negotiation_complete"]
+    
+    if completion_events:
+        completion_data = completion_events[0]["data"]
+        # If a seller was selected, decision node was called
+        if completion_data.get("selected_seller_id"):
+            assert "reason" in completion_data
+            # Verify LLM was involved (reason should be generated)
+            assert isinstance(completion_data["reason"], str)

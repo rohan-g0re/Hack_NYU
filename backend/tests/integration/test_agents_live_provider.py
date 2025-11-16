@@ -77,7 +77,7 @@ def sample_room_state(sample_buyer_constraints, sample_seller):
         sellers=[sample_seller],
         conversation_history=[],
         current_round=0,
-        max_rounds=10
+        max_rounds=5
     )
 
 
